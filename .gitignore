@@ -1,0 +1,15 @@
+# secrets & per-VM config — never commit
+brain.env
+team_secret.txt
+*.secret
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# data / runtime
+brain-docs/
+data/
+*.db
+*.pid
