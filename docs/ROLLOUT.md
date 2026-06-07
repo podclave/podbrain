@@ -21,38 +21,35 @@ curl https://<brain>.sprites.app/healthz
 curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory/health
 ```
 
-## 2. Client overlay (fan out to every teammate VM)
+## 2. Client config bundle (the overlay set)
 
-The overlay does **full-file drops, one row per file**. Drop these:
+Add these **4 overlays** to the `team-brain` bundle. Relative paths
+land in `$HOME`; `.env.podclave.*` is auto-sourced into every shell. `brain.sh` is
+always invoked via `bash …/brain.sh`, so no executable bit is needed.
 
-| Source (repo) | Dest on each VM | Owner |
-|---|---|---|
-| `client/skills/team-brain/SKILL.md` | `~/.claude/skills/team-brain/SKILL.md` | user |
-| `client/skills/team-brain/brain.sh` | `~/.claude/skills/team-brain/brain.sh` (mode 0755) | user |
-| `client/skills/team-brain/hooks/recall.sh` | `~/.claude/skills/team-brain/hooks/recall.sh` (0755) | user |
-| `client/skills/team-brain/hooks/stop.sh` | `~/.claude/skills/team-brain/hooks/stop.sh` (0755) | user |
-| `client/skills/team-brain/hooks/sessionend.sh` | `~/.claude/skills/team-brain/hooks/sessionend.sh` (0755) | user |
-| `client/skills/team-brain/capture/distill.sh` | `~/.claude/skills/team-brain/capture/distill.sh` (0755) | user |
-| **(configured in Podclave, NOT git)** `brain.env` | `~/.claude/skills/team-brain/brain.env` (0600) | user |
-| `client/managed-settings.d/20-team-brain.json` | `/etc/claude-code/managed-settings.d/20-team-brain.json` | **root** |
+| # | Overlay path | Owner | Contents = repo file |
+|---|---|---|---|
+| 1 | `.claude/skills/team-brain/SKILL.md` | user | `client/skills/team-brain/SKILL.md` |
+| 2 | `.claude/skills/team-brain/brain.sh` | user | `client/skills/team-brain/brain.sh` |
+| 3 | `.env.podclave.brain` | user | `client/env.podclave.brain.template` (fill URL + secret) |
+| 4 | `/etc/claude-code/managed-settings.d/20-team-brain.json` | **root** | `client/managed-settings.d/20-team-brain.json` |
 
-`brain.env` is the only file with secrets, so it lives in Podclave config (not the
-repo). Its contents are **identical for everyone**:
+**Overlay #3** is the only one with secrets, so its real contents live in Podclave
+(not git). Identical for the whole org:
 
 ```sh
-BRAIN_URL="https://<brain>.sprites.app"
-BRAIN_SECRET="<secret>"
-BRAIN_USER=""
+export BRAIN_URL="https://<brain>.sprites.app"
+export BRAIN_SECRET="<secret>"
 ```
 
-No per-user templating: `brain.sh` reads the teammate's identity from
-`~/.podclave/user-email` (written by Podclave on Setup), falling back to git
-email / `$USER`.
+Identity is **not** in the bundle — `brain.sh` reads `~/.podclave/user-email`
+(written by Podclave on Setup), falling back to git email / `$USER`. So every
+teammate's overlays are byte-identical; attribution still works per-person.
 
-Why the `/etc` file is safe org-wide: Claude Code **combines** hooks across all
-settings sources, so this managed file adds the auto-recall + auto-capture hooks
-**without touching anyone's own `~/.claude/settings.json`**. Re-provisioning
-overwrites just this one root-owned file (idempotent).
+Why **#4** is safe org-wide: Claude Code **combines** hooks across all settings
+sources, so this managed file adds the auto-recall + auto-capture hooks **without
+touching anyone's own `~/.claude/settings.json`**. It's `owner: root` so users
+can't disable it; re-provisioning overwrites just this one file (idempotent).
 
 > Manual / single-VM dogfood alternative (no overlay):
 > ```bash

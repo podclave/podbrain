@@ -18,18 +18,16 @@ MANAGED_DIR="${MANAGED_DIR:-/etc/claude-code/managed-settings.d}"
 
 DEST="$HOME/.claude/skills/team-brain"
 mkdir -p "$DEST"
-cp -r "$HERE/skills/team-brain/." "$DEST/"
-rm -f "$DEST/brain.env.template"
-chmod +x "$DEST/brain.sh" "$DEST/hooks/"*.sh "$DEST/capture/"*.sh 2>/dev/null || true
+cp "$HERE/skills/team-brain/SKILL.md" "$HERE/skills/team-brain/brain.sh" "$DEST/"
+chmod +x "$DEST/brain.sh" 2>/dev/null || true
 
-cat > "$DEST/brain.env" <<EOF
-# rendered by install-client.sh — identical org-wide; identity via ~/.podclave/user-email
-BRAIN_URL="$BRAIN_URL"
-BRAIN_SECRET="$BRAIN_SECRET"
-BRAIN_USER=""
+# Mirror the overlay model: config lives in ~/.env.podclave.brain (brain.sh reads it).
+cat > "$HOME/.env.podclave.brain" <<EOF
+export BRAIN_URL="$BRAIN_URL"
+export BRAIN_SECRET="$BRAIN_SECRET"
 EOF
-chmod 600 "$DEST/brain.env"
-log "installed skill bundle + brain.env to $DEST"
+chmod 600 "$HOME/.env.podclave.brain"
+log "installed skill bundle to $DEST + config to ~/.env.podclave.brain"
 
 if [ "$WITH_HOOKS" = "1" ]; then
   if mkdir -p "$MANAGED_DIR" 2>/dev/null && [ -w "$MANAGED_DIR" ]; then

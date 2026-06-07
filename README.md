@@ -39,12 +39,17 @@ server/
   install-brain.sh         one-shot, idempotent server provisioner
   gateway/app.py           the FastAPI gateway
   gateway/requirements.txt pinned deps
-client/
-  install-client.sh        per-VM onboarding (overlay runs this)
-  skills/team-brain/       skill + brain.sh helper + hooks + distiller
-  managed-settings.d/      hook registration (zero-merge, org-wide)
-  CLAUDE.snippet.md        optional CLAUDE.md block
+client/                    shipped as a Podclave config bundle (4 overlays)
+  skills/team-brain/SKILL.md   skill manifest
+  skills/team-brain/brain.sh   single-file client: recall/remember/file +
+                               hook-recall/hook-stop/hook-sessionend + distill
+  env.podclave.brain.template  -> ~/.env.podclave.brain (URL + secret, auto-sourced)
+  managed-settings.d/20-team-brain.json  -> /etc/... (hooks, owner root, zero-merge)
+  CLAUDE.snippet.md            optional CLAUDE.md block
+  install-client.sh            manual/dogfood installer (overlay is preferred)
 ```
+
+See [docs/ROLLOUT.md](docs/ROLLOUT.md) for the exact overlay manifest.
 
 ## Stand up a new brain (server)
 

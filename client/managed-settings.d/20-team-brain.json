@@ -1,14 +1,14 @@
 {
-  "_comment": "ZERO-MERGE DEPLOY: drop at /etc/claude-code/managed-settings.d/20-team-brain.json on every Podclave VM. Claude Code COMBINES hooks across all settings sources, so this injects the team-brain hooks org-wide WITHOUT touching any user's ~/.claude/settings.json. Re-provisioning overwrites this one owned file -> idempotent. Hooks: UserPromptSubmit=auto-recall (inject relevant knowledge); Stop=async passive capture (debounced distiller); SessionEnd=capture backstop. All guard against BRAIN_DISTILLER recursion.",
+  "_comment": "Overlay drop to /etc/claude-code/managed-settings.d/20-team-brain.json (owner: root). Claude Code COMBINES hooks across all settings sources, so this adds the team-brain hooks org-wide WITHOUT touching any user's ~/.claude/settings.json. All hooks are subcommands of the single brain.sh; each guards against BRAIN_DISTILLER recursion.",
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/hooks/recall.sh" } ] }
+      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/brain.sh hook-recall" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/hooks/stop.sh", "async": true } ] }
+      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/brain.sh hook-stop", "async": true } ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/hooks/sessionend.sh" } ] }
+      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/brain.sh hook-sessionend" } ] }
     ]
   }
 }
