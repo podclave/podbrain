@@ -11,9 +11,15 @@ git clone https://github.com/podclave/podbrain.git && cd podbrain
 bash server/install-brain.sh
 ```
 
-Note the two outputs:
-- **Secret** — printed at the end (also at `~/.agentmemory/team_secret.txt`).
-- **Public URL** — `sprite url` (e.g. `https://<brain>.sprites.app`).
+The installer prints a `BRAIN_URL` + `BRAIN_SECRET` block at the end (secret also
+at `~/.agentmemory/team_secret.txt`). Two things the installer can't do itself:
+
+- **Set public auth mode** — do this on the Sprite/Podclave side (the bearer
+  secret is the gatekeeper). Without it, clients can't reach the brain.
+- **Authenticate Claude on the brain box** — the LLM cataloger
+  (`AGENTMEMORY_PROVIDER=agent-sdk`) runs `claude` here. If Claude isn't logged in
+  on this box, capture/recall/ingest/dedup all still work, but deep consolidation
+  silently degrades to no-op. Run `claude` once to log in for the full cataloger.
 
 Verify:
 ```bash
