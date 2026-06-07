@@ -52,17 +52,24 @@ do_distill(){ # <session_id> <transcript_path>
   local OFFSET_FILE="$STATE/offset-$SID" LOCK="$STATE/lock-$SID"
   local MODEL="${BRAIN_DISTILL_MODEL:-claude-haiku-4-5-20251001}"
   [ -f "$TRANSCRIPT" ] || return 0
+  # clear a stale lock from a killed run (older than 10 min) so capture isn't blocked forever
+  [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +10 -exec rm -rf {} + 2>/dev/null
   mkdir "$LOCK" 2>/dev/null || return 0
   trap 'rmdir "$LOCK" 2>/dev/null' RETURN
   local total offset; total="$(wc -l < "$TRANSCRIPT" 2>/dev/null || echo 0)"; offset="$(cat "$OFFSET_FILE" 2>/dev/null || echo 0)"
   [ "$total" -gt "$offset" ] || return 0
+  # Render user/assistant text only; drop isMeta entries (skill-load dumps), and
+  # strip injected <team-brain-context> blocks so the brain never re-ingests what
+  # it recalled (the feedback loop).
   local slice; slice="$(tail -n +"$((offset+1))" "$TRANSCRIPT" 2>/dev/null | jq -rc '
-    select(.type=="user" or .type=="assistant")
+    select((.type=="user" or .type=="assistant") and ((.isMeta // false)==false))
     | if .type=="user" then (.message.content | if type=="string" then "USER: "+. else ((.[]?|select(.type=="text")|"USER: "+.text)//empty) end)
-      else (.message.content[]? | if .type=="text" then "ASSISTANT: "+.text elif .type=="tool_use" then "ASSISTANT[used tool: "+(.name//"?")+"]" else empty end) end' 2>/dev/null)"
+      else (.message.content[]? | if .type=="text" then "ASSISTANT: "+.text elif .type=="tool_use" then "ASSISTANT[used tool: "+(.name//"?")+"]" else empty end) end' 2>/dev/null \
+    | sed '/<team-brain-context>/,/<\/team-brain-context>/d')"
   [ "$(printf '%s' "$slice" | tr -d '[:space:]' | wc -c)" -ge 40 ] || { echo "$total" > "$OFFSET_FILE"; return 0; }
-  local INSTRUCTION='You are the memory distiller for a software team'\''s shared brain. Read the Claude Code session excerpt on stdin and extract ONLY durable, reusable knowledge worth remembering for the whole team: decisions, factual project/infra details, conventions, preferences, gotchas, root-cause fixes, architecture. INCLUDE things stated in plain conversation, not just file edits. EXCLUDE transient chatter, narration, anything trivial, and ANY secrets/tokens/keys. Output STRICT JSON only: an array of {"content":"...","type":"fact|decision|lesson"}, each content one atomic self-contained fact. If nothing is worth remembering, output exactly [].'
-  local raw json; raw="$(printf '%s' "$slice" | BRAIN_DISTILLER=1 timeout 120 claude -p "$INSTRUCTION" --model "$MODEL" --output-format text 2>/dev/null)"
+  local INSTRUCTION='You are the memory distiller for a software team'\''s shared brain. Read the Claude Code session excerpt on stdin and extract ONLY durable, reusable knowledge worth remembering for the whole team: decisions, factual project/infra details, conventions, preferences, gotchas, root-cause fixes, architecture. INCLUDE things newly stated by the user or newly discovered/decided in THIS session. CRITICAL: do NOT extract facts that were merely recalled from the team brain or recited from prior knowledge (e.g. an assistant answering "here is what we know..." with already-stored facts) — those are already saved; capture only NEW information. EXCLUDE transient chatter, narration, task-execution requests (e.g. "create a file containing X"), anything trivial, and ANY secrets/tokens/keys. Output STRICT JSON only: an array of {"content":"...","type":"fact|decision|lesson"}, each content one atomic self-contained fact. If nothing is worth remembering, output exactly [].'
+  local raw json rc; raw="$(printf '%s' "$slice" | BRAIN_DISTILLER=1 timeout 120 claude -p "$INSTRUCTION" --model "$MODEL" --output-format text 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || return 0   # claude failed/timed out: leave offset unchanged so we retry the slice
   [ -n "$raw" ] || { echo "$total" > "$OFFSET_FILE"; return 0; }
   json="$(printf '%s' "$raw" | sed -n '/\[/,/\]/p')"; echo "$json" | jq empty 2>/dev/null || { echo "$total" > "$OFFSET_FILE"; return 0; }
   scrub(){ sed -E -e 's/(sk-(ant-)?[A-Za-z0-9_-]{12,})/[REDACTED]/g' \
