@@ -64,16 +64,23 @@ curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory
 
 ## Onboard a teammate (client)
 
-Each teammate's Claude Code VM (shipped via the Podclave org overlay):
+Production rollout is via the **Podclave org overlay** — see [docs/ROLLOUT.md](docs/ROLLOUT.md)
+for the exact file drops, `brain.env` config, the `/etc` hooks file (`owner: root`),
+and the cataloger Schedule.
+
+For a single manual / dogfood VM (no overlay):
 
 ```bash
-BRAIN_URL=https://<brain>.sprites.app BRAIN_SECRET=<secret> bash client/install-client.sh
+BRAIN_URL=https://<brain>.sprites.app BRAIN_SECRET=<secret> \
+  bash client/install-client.sh --with-hooks
 ```
 
-This installs the `team-brain` skill, renders `brain.env`, and drops the hooks
-into `/etc/claude-code/managed-settings.d/` — which Claude Code **combines**
-across all settings sources, so the user's own `settings.json` is never touched.
-Per-user attribution comes from `~/.podclave/user-email` (no per-user config).
+This installs the `team-brain` skill, renders `brain.env`, and (with `--with-hooks`)
+drops the hooks into `/etc/claude-code/managed-settings.d/` — which Claude Code
+**combines** across all settings sources, so the user's own `settings.json` is
+never touched. Per-user attribution comes from `~/.podclave/user-email` (no
+per-user config). Default (no flag) installs only the `$HOME` pieces and leaves
+the `/etc` hooks to the overlay.
 
 After that, the teammate's Claude:
 - **auto-recalls** relevant team knowledge each turn (UserPromptSubmit hook),
