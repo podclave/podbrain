@@ -40,16 +40,16 @@ server/
   gateway/app.py           the FastAPI gateway
   gateway/requirements.txt pinned deps
 client/                    shipped as a Podclave config bundle (4 overlays)
+  README.md                    the overlay manifest (path -> contents)
   skills/team-brain/SKILL.md   skill manifest
   skills/team-brain/brain.sh   single-file client: recall/remember/file +
                                hook-recall/hook-stop/hook-sessionend + distill
   env.podclave.brain.template  -> ~/.env.podclave.brain (URL + secret, auto-sourced)
   managed-settings.d/20-team-brain.json  -> /etc/... (hooks, owner root, zero-merge)
-  CLAUDE.snippet.md            optional CLAUDE.md block
-  install-client.sh            manual/dogfood installer (overlay is preferred)
 ```
 
-See [docs/ROLLOUT.md](docs/ROLLOUT.md) for the exact overlay manifest.
+See [client/README.md](client/README.md) for the overlay manifest and
+[docs/ROLLOUT.md](docs/ROLLOUT.md) for the full rollout.
 
 ## Stand up a new brain (server)
 
@@ -69,23 +69,15 @@ curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory
 
 ## Onboard a teammate (client)
 
-Production rollout is via the **Podclave org overlay** — see [docs/ROLLOUT.md](docs/ROLLOUT.md)
-for the exact file drops, `brain.env` config, the `/etc` hooks file (`owner: root`),
-and the cataloger Schedule.
+Rollout is via a **Podclave config bundle** — 4 overlays, no installer. See
+[client/README.md](client/README.md) for the exact overlay manifest (path →
+contents) and [docs/ROLLOUT.md](docs/ROLLOUT.md) for the full rollout (server,
+schedule, verification).
 
-For a single manual / dogfood VM (no overlay):
-
-```bash
-BRAIN_URL=https://<brain>.sprites.app BRAIN_SECRET=<secret> \
-  bash client/install-client.sh --with-hooks
-```
-
-This installs the `team-brain` skill, renders `brain.env`, and (with `--with-hooks`)
-drops the hooks into `/etc/claude-code/managed-settings.d/` — which Claude Code
-**combines** across all settings sources, so the user's own `settings.json` is
-never touched. Per-user attribution comes from `~/.podclave/user-email` (no
-per-user config). Default (no flag) installs only the `$HOME` pieces and leaves
-the `/etc` hooks to the overlay.
+Per-user attribution comes from `~/.podclave/user-email` (no per-user config), so
+every teammate's overlays are byte-identical. Claude Code **combines** hooks
+across settings sources, so the `/etc` hooks file never touches anyone's own
+`settings.json`.
 
 After that, the teammate's Claude:
 - **auto-recalls** relevant team knowledge each turn (UserPromptSubmit hook),

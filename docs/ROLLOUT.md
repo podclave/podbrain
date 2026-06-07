@@ -51,11 +51,11 @@ sources, so this managed file adds the auto-recall + auto-capture hooks **withou
 touching anyone's own `~/.claude/settings.json`**. It's `owner: root` so users
 can't disable it; re-provisioning overwrites just this one file (idempotent).
 
-> Manual / single-VM dogfood alternative (no overlay):
-> ```bash
-> BRAIN_URL=https://<brain>.sprites.app BRAIN_SECRET=<secret> \
->   bash client/install-client.sh --with-hooks
-> ```
+> Manual / single-VM dogfood (no overlay): place the same 4 files yourself —
+> copy `client/skills/team-brain/{SKILL.md,brain.sh}` to `~/.claude/skills/team-brain/`,
+> write `~/.env.podclave.brain` (URL + secret), and copy
+> `client/managed-settings.d/20-team-brain.json` to
+> `/etc/claude-code/managed-settings.d/` (root). Then `bash ~/.claude/skills/team-brain/brain.sh health`.
 
 ## 3. Schedule the cataloger (Podclave per-Sprite Schedule)
 
