@@ -56,8 +56,8 @@ mkdir -p "$GW_DIR" "$DOCS_DIR"
 cp "$HERE/gateway/app.py" "$HERE/gateway/requirements.txt" "$GW_DIR/"
 [ -d "$GW_DIR/.venv" ] || { log "creating gateway venv"; python3 -m venv "$GW_DIR/.venv"; }
 log "installing gateway deps"
-"$GW_DIR/.venv/bin/pip" install -q --upgrade pip >/dev/null
-"$GW_DIR/.venv/bin/pip" install -q -r "$GW_DIR/requirements.txt"
+"$GW_DIR/.venv/bin/pip" install -q --no-cache-dir --upgrade pip >/dev/null
+"$GW_DIR/.venv/bin/pip" install -q --no-cache-dir -r "$GW_DIR/requirements.txt"
 
 # --- 4. sprite services ------------------------------------------------------
 svc_exists(){ sprite-env services get "$1" >/dev/null 2>&1; }
@@ -92,8 +92,8 @@ cat <<EOF
 =========================================================================
   podbrain server is UP.
   ---------------------------------------------------------------------
-  BRAIN_URL=${URL:-<run: sprite-env info>}
-  BRAIN_SECRET=$SECRET
+  export BRAIN_URL="${URL:-<run: sprite-env info>}"
+  export BRAIN_SECRET="$SECRET"
   ---------------------------------------------------------------------
   Next:
    1. Ensure this Sprite is in PUBLIC auth mode (bearer is the gatekeeper).
