@@ -10,6 +10,9 @@
     ],
     "SessionEnd": [
       { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/brain.sh hook-sessionend" } ] }
+    ],
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/brain.sh hook-sessionstart" } ] }
     ]
   }
 }

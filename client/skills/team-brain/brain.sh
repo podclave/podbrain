@@ -52,10 +52,10 @@ do_distill(){ # <session_id> <transcript_path>
   local OFFSET_FILE="$STATE/offset-$SID" LOCK="$STATE/lock-$SID"
   local MODEL="${BRAIN_DISTILL_MODEL:-claude-haiku-4-5-20251001}"
   [ -f "$TRANSCRIPT" ] || return 0
-  # clear a stale lock from a killed run (older than 10 min) so capture isn't blocked forever
-  [ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +10 -exec rm -rf {} + 2>/dev/null
-  mkdir "$LOCK" 2>/dev/null || return 0
-  trap 'rmdir "$LOCK" 2>/dev/null' RETURN
+  # Single-flight per session via flock — auto-releases on process exit, so a
+  # killed run never leaves a stale lock (and the fd closes when this fn's process ends).
+  exec 9>"$LOCK" 2>/dev/null || return 0
+  flock -n 9 2>/dev/null || return 0
   local total offset; total="$(wc -l < "$TRANSCRIPT" 2>/dev/null || echo 0)"; offset="$(cat "$OFFSET_FILE" 2>/dev/null || echo 0)"
   [ "$total" -gt "$offset" ] || return 0
   # Render user/assistant text only; drop isMeta entries (skill-load dumps), and
@@ -86,6 +86,20 @@ do_distill(){ # <session_id> <transcript_path>
   return 0
 }
 
+# Capture must survive (a) Claude cancelling the hook on shutdown and (b) the box
+# auto-suspending mid-distill. So every distill runs DETACHED (setsid) and holds a
+# Sprite keep-alive task for its duration. The keep-alive uses `sprite-env curl`
+# (the platform's own tasks API) and no-ops gracefully when not on a Sprite.
+sprite_task(){ command -v sprite-env >/dev/null 2>&1 && sprite-env curl "$@" >/dev/null 2>&1 || true; }
+kp_distill(){ # <sid> <transcript>
+  # Fixed-name keep-alive: each POST upserts/extends the 1m TTL (concurrency-safe;
+  # self-cleans via expiry — no DELETE). If a slow distill outlives the TTL, the
+  # rc-gated offset + SessionStart sweep just retry it. No-op off-Sprite.
+  sprite_task -X POST /v1/tasks -d '{"name":"brain-capture","expire":"1m"}'
+  do_distill "$1" "$2"
+}
+detach(){ setsid bash "$DIR/brain.sh" "$@" >/dev/null 2>&1 </dev/null & }
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   recall)   do_recall "${1:?usage: recall <query>}" "${2:-5}" ;;
@@ -102,21 +116,42 @@ case "$cmd" in
     ctx="$(timeout 12 bash "$DIR/brain.sh" recall "$prompt" 2>/dev/null || true)"; [ -n "$ctx" ] || exit 0
     printf '<team-brain-context>\n# Relevant shared knowledge from the team brain (recall before answering):\n%s\n</team-brain-context>\n' "$ctx" ;;
   hook-stop)
+    # Detach a debounced capture that survives /exit (setsid) and spin-down (keep-alive).
     [ -n "${BRAIN_DISTILLER:-}" ] && exit 0
     mkdir -p "$STATE"; input="$(cat)"
     SID="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
     TR="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"
     [ -n "$SID" ] && [ -n "$TR" ] && [ -f "$TR" ] || exit 0
-    PING="$STATE/ping-$SID"; TS="$(date +%s%N)"; echo "$TS" > "$PING"
-    sleep "${BRAIN_DEBOUNCE_SECS:-90}"
-    [ "$(cat "$PING" 2>/dev/null)" = "$TS" ] || exit 0
-    do_distill "$SID" "$TR" ;;
+    TS="$(date +%s%N)"; echo "$TS" > "$STATE/ping-$SID"
+    detach _bgstop "$SID" "$TR" "$TS" ;;
   hook-sessionend)
+    # Detach immediate capture — returns fast so Claude doesn't cancel it on shutdown.
     [ -n "${BRAIN_DISTILLER:-}" ] && exit 0
     input="$(cat)"
     SID="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
     TR="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"
     [ -n "$SID" ] && [ -n "$TR" ] && [ -f "$TR" ] || exit 0
-    do_distill "$SID" "$TR" ;;
-  *) echo "usage: brain.sh {recall|remember|file|health|distill|hook-recall|hook-stop|hook-sessionend}" >&2 ;;
+    detach _bgnow "$SID" "$TR" ;;
+  hook-sessionstart)
+    # Catch-up backstop: at the start of a session (box guaranteed awake), sweep any
+    # recent transcript whose capture was missed (killed Stop/SessionEnd). Detached.
+    [ -n "${BRAIN_DISTILLER:-}" ] && exit 0
+    SID="$(cat | jq -r '.session_id // empty' 2>/dev/null)"
+    detach _bgsweep "${SID:-none}" ;;
+  _bgstop)
+    sleep "${BRAIN_DEBOUNCE_SECS:-90}"
+    [ "$(cat "$STATE/ping-$1" 2>/dev/null)" = "$3" ] || exit 0   # a newer turn won; let it capture
+    kp_distill "$1" "$2" ;;
+  _bgnow)
+    kp_distill "$1" "$2" ;;
+  _bgsweep)
+    cur="${1:-none}"
+    for tr in $(find "$HOME/.claude/projects" -name '*.jsonl' -mmin -2880 2>/dev/null); do
+      sid="$(basename "$tr" .jsonl)"
+      [ "$sid" = "$cur" ] && continue
+      # skip the distiller's own `claude -p` transcripts (would re-ingest)
+      head -c 4000 "$tr" 2>/dev/null | grep -q "memory distiller for a software team" && continue
+      kp_distill "$sid" "$tr"
+    done ;;
+  *) echo "usage: brain.sh {recall|remember|file|health|distill|hook-recall|hook-stop|hook-sessionend|hook-sessionstart}" >&2 ;;
 esac
