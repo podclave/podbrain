@@ -1,5 +1,6 @@
 {
-  "_comment": "Overlay drop to /etc/claude-code/managed-settings.d/20-team-brain.json (owner: root). Claude Code COMBINES hooks across all settings sources, so this adds the team-brain hooks org-wide WITHOUT touching any user's ~/.claude/settings.json. All hooks are subcommands of the single brain.sh; each guards against BRAIN_DISTILLER recursion.",
+  "_comment": "Overlay drop to /etc/claude-code/managed-settings.d/20-team-brain.json (owner: root). Claude Code COMBINES hooks across all settings sources, so this adds the team-brain hooks org-wide WITHOUT touching any user's ~/.claude/settings.json. autoMemoryEnabled:false disables Claude's native file-based memory fleet-wide (users can't re-enable) so team-brain is THE memory system. All hooks are subcommands of the single brain.sh; each guards against BRAIN_DISTILLER recursion.",
+  "autoMemoryEnabled": false,
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "bash ~/.claude/skills/team-brain/brain.sh hook-recall" } ] }
