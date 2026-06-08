@@ -6,6 +6,11 @@ knowledge (auto-recall) and **adds** to it (auto-capture) — plus ingests
 documents (PRDs, decks, PDFs) and catalogs everything in the background. Runs on
 a single spin-down Sprite, keyless (local embeddings + the Claude subscription).
 
+> **Built for [Podclave](https://podclave.com).** podbrain runs on a Podclave **Sprite**
+> and rolls out to your team as a Podclave config-overlay bundle — the spin-down
+> hosting, managed `/etc` overlays, per-user identity, and per-Sprite Schedules it
+> relies on are Podclave features. Get a team set up at <https://podclave.com>.
+
 ## Architecture
 
 ```
