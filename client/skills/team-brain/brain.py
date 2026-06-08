@@ -17,6 +17,7 @@ Subcommands:
   recall <query> [k]        bulleted relevant memories (full content)
   remember <text> [type]    save a memory (fact|decision|lesson)
   file <path> [note]        ingest a document (pdf/docx/pptx/md...)
+  viewer                    print the browser memory-viewer URL (embeds the key)
   health                    service check
   hook-recall               UserPromptSubmit: inject <team-brain-context>
   hook-stop                 Stop (async): debounce + passive capture
@@ -28,7 +29,7 @@ Config (BRAIN_URL, BRAIN_SECRET): env if set, else ~/.env.podclave.brain / ./bra
 Identity: ~/.podclave/user-email, falling back to git email / $USER.
 Deps: python3 only (stdlib). External processes: claude, sprite-env (both optional/guarded).
 """
-import os, sys, re, json, time, fcntl, shutil, subprocess, urllib.request
+import os, sys, re, json, time, fcntl, shutil, subprocess, urllib.request, urllib.parse
 
 HOME = os.path.expanduser("~")
 SELF = os.path.abspath(__file__)
@@ -180,6 +181,16 @@ def do_file(path, note=""):
     req.add_header("Content-Type", "multipart/form-data; boundary=" + boundary)
     with urllib.request.urlopen(req, timeout=180) as r:
         print(r.read().decode())
+
+
+def do_viewer():
+    # The browser dashboard is gateway-gated by an HttpOnly cookie set via
+    # /viewer?key=<secret>; the secret IS our bearer (BRAIN_SECRET == the gateway's
+    # secret == the cookie value), so we can compose the link locally — no round-trip.
+    # The user opens this in a browser; it 303-redirects to a clean /viewer with the
+    # cookie set. Key is exposed in the URL by design (admin/ops-grade access).
+    print("%s/viewer?key=%s" % (BRAIN_URL.rstrip("/"),
+                                urllib.parse.quote(BRAIN_SECRET, safe="")))
 
 
 # --- distillation ------------------------------------------------------------
@@ -376,6 +387,8 @@ def main():
         do_remember(a[0], a[1] if len(a) > 1 else "fact")
     elif cmd == "file":
         do_file(a[0], a[1] if len(a) > 1 else "")
+    elif cmd == "viewer":
+        do_viewer()
     elif cmd == "health":
         try:
             print(json.dumps(api("/agentmemory/health")))
@@ -458,7 +471,7 @@ def main():
                     continue
                 kp_distill(sid, tr)
     else:
-        print("usage: brain.py {recall|remember|file|health|distill|hook-recall|"
+        print("usage: brain.py {recall|remember|file|viewer|health|distill|hook-recall|"
               "hook-stop|hook-sessionend|hook-sessionstart}", file=sys.stderr)
 
 

@@ -16,6 +16,7 @@ pointed at the team's central server.
 - **Remember / save / "note that" / "don't forget"** → `memory_save` (one atomic, self-contained fact per call).
 - **Curate / dedupe / "clean those up"** → inspect with `memory_smart_search`, then `memory_governance_delete` to remove duplicates (this prompts — it's shared, irreversible state). Use `memory_snapshot_create` first if you want an explicit restore point, `memory_consolidate` to run the consolidation pipeline, and `memory_audit` to see what changed.
 - **"file this" / a document to absorb (PRD, deck, PDF, docx, md)** → `python3 ~/.claude/skills/team-brain/brain.py file "<path>" "<optional note>"`. This is the ONE thing not in the MCP: it uploads the document to the brain's ingest endpoint, which extracts + chunks + stores it so its contents become searchable via the MCP.
+- **"open the memory viewer" / "show me the dashboard" / "browse the brain in a browser"** → `python3 ~/.claude/skills/team-brain/brain.py viewer`. Prints a ready-to-open URL (`<brain>/viewer?key=…`) that logs the browser in via a cookie; give the user the URL to click. The key is embedded by design (admin/ops-grade access to the shared dashboard).
 - **Proactively**: `memory_smart_search` for relevant prior decisions / conventions / gotchas before non-trivial work on a shared project.
 
 ## Conventions
