@@ -34,12 +34,13 @@ a single spin-down Sprite, keyless (local embeddings + the Claude subscription).
 
 ## Setup at a glance
 
-```
-git clone → bash server/install-brain.sh → bash client/overlay_instructions.sh → paste into Podclave → done
-```
+1. `git clone https://github.com/podclave/podbrain.git && cd podbrain`
+2. `bash server/install-brain.sh` — stand up the brain (once)
+3. `bash client/overlay_instructions.sh` — render the client overlays
+4. Paste the printed blocks into your Podclave `team-brain` bundle
+5. Done — every teammate's Claude Code is now wired up
 
-Stand up the server once, then drop the client overlay bundle into your Podclave
-org so every teammate's Claude Code is wired up. Details below.
+Details for each step below.
 
 ## 1. Stand up the server
 
