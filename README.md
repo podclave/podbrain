@@ -183,5 +183,5 @@ client/
   managed-settings.d/20-team-brain.json  → /etc/... (hooks + MCP-tool perms, root)
   managed-mcp.json             → /etc/claude-code/managed-mcp.json (the agentmemory MCP, root)
 docs/
-  STATUS.md                project status, handoff, and hard-won design lessons
+  DEVELOPING.md            working ON podbrain: design decisions, gotchas, tradeoffs
 ```
