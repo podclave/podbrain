@@ -14,7 +14,7 @@ document ingest (gateway-only endpoint, not in the engine MCP). The recall/remem
 CLI verbs remain as the hooks' internal plumbing.
 
 Subcommands:
-  recall <query> [k]        bulleted relevant memories (full content)
+  recall <query> [k]        bulleted candidate memories (titles, best-first)
   remember <text> [type]    save a memory (fact|decision|lesson)
   file <path> [note]        ingest a document (pdf/docx/pptx/md...)
   viewer                    print the browser memory-viewer URL (embeds the key)
@@ -98,50 +98,21 @@ def api(path, method="GET", data=None, timeout=25):
 
 
 # --- core verbs --------------------------------------------------------------
-# Relevance gating for auto-injected recall. smart-search scores are small and
-# compressed on this engine (good hits ~0.01–0.02, with a long weakly-related tail),
-# so we drop results below an absolute floor AND below a relative band off the top
-# hit — otherwise every prompt pays tokens for near-irrelevant context. Both knobs
-# are env-tunable; calibrate against your brain's scale. Fail OPEN: a result with no
-# numeric score is always kept, so an unexpected response shape never empties recall.
-RECALL_MIN_SCORE = float(os.environ.get("BRAIN_RECALL_MIN_SCORE", "0.005"))
-RECALL_REL = float(os.environ.get("BRAIN_RECALL_REL", "0.6"))
-
-
-def _gate(results, k):
-    scores = [r.get("score") for r in results if isinstance(r.get("score"), (int, float))]
-    top = max(scores) if scores else None
-    kept = []
-    for r in results:
-        s = r.get("score")
-        if isinstance(s, (int, float)):
-            if s < RECALL_MIN_SCORE:
-                continue
-            if top and s < top * RECALL_REL:
-                continue
-        kept.append(r)
-        if len(kept) >= k:
-            break
-    return kept
-
-
-def do_recall(q, k=5):
+# Auto-injected recall is a generous, cheap MENU — a wide top-k handed to the client
+# so the model (the smartest thing in the loop) decides what to use vs ignore. No
+# score threshold: raw hybrid scores aren't comparable across brains. smart-search
+# returns results best-first and each `title` IS the full text for atomic facts; the
+# model pulls full detail for anything longer (doc chunks) via the agentmemory MCP.
+# One round-trip, no per-item fetch.
+def do_recall(q, k=15):
     try:
         res = api("/agentmemory/smart-search", "POST", {"query": q})
     except Exception:
         return
-    for r in _gate(res.get("results") or [], k):
-        i = r.get("obsId")
-        if not i:
-            continue
-        try:
-            m = api("/agentmemory/memories/%s" % i)
-        except Exception:
-            continue
-        mem = m.get("memory") or {}
-        c = m.get("content") or mem.get("content") or m.get("title") or mem.get("title")
-        if c:
-            print("• " + c)
+    for r in (res.get("results") or [])[:k]:
+        t = (r.get("title") or "").strip()
+        if t:
+            print("• " + t)
 
 
 def _save(text, typ="fact", source="human"):
@@ -408,8 +379,11 @@ def main():
         except Exception:
             ctx = ""
         if ctx.strip():
-            print("<team-brain-context>\n# Relevant shared knowledge from the team brain "
-                  "(recall before answering):\n%s\n</team-brain-context>" % ctx.rstrip())
+            print("<team-brain-context>\n# Possibly-relevant notes from the team brain — "
+                  "candidates, not gospel. Use any that apply, ignore the rest; for any "
+                  "item you want in full (e.g. a doc chunk), pull it via the agentmemory "
+                  "MCP (memory_recall / memory_smart_search).\n%s\n</team-brain-context>"
+                  % ctx.rstrip())
     elif cmd == "hook-stop":
         if guard():
             return
