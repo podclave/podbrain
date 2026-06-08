@@ -1,0 +1,17 @@
+{
+  "_comment": "Overlay drop to /etc/claude-code/managed-mcp.json (owner: root). Defines the team-brain MCP for the whole org. NOTE: a managed-mcp.json takes EXCLUSIVE control of MCP — only servers defined here load; teammates' own local/project MCP servers are blocked (add any other team MCP here too). Managed MCP servers are auto-trusted (no per-user approval prompt). allowAllClaudeAiMcps keeps each user's claude.ai connectors working despite the lock. The agentmemory MCP is a LOCAL stdio shim (npx @agentmemory/mcp) that PROXIES to our remote brain over REST via AGENTMEMORY_FORCE_PROXY + AGENTMEMORY_URL + AGENTMEMORY_SECRET; calls go to /agentmemory/mcp/* through our bearer-gated gateway. No secret in this file: ${BRAIN_URL}/${BRAIN_SECRET} expand from the auto-sourced ~/.env.podclave.brain. Requires Claude Code >= 2.1.149 (allowAllClaudeAiMcps).",
+  "mcpServers": {
+    "agentmemory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@agentmemory/mcp"],
+      "env": {
+        "AGENTMEMORY_URL": "${BRAIN_URL}",
+        "AGENTMEMORY_SECRET": "${BRAIN_SECRET}",
+        "AGENTMEMORY_FORCE_PROXY": "1",
+        "AGENTMEMORY_TOOLS": "all"
+      }
+    }
+  },
+  "allowAllClaudeAiMcps": true
+}

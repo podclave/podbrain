@@ -16,6 +16,7 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
 - Client = 4-overlay Podclave bundle (`client/`). Native auto-memory overtaken (`autoMemoryEnabled:false`).
 - Proven: cross-session recall, cross-fact synthesis, explicit + passive capture, doc ingest, dedup, keyless cataloger.
 - **Client is Python now** (`brain.py`, stdlib only) — migrated from the original bash `brain.sh` after a 3-way bash/python/elixir spike. Same CLI + hook contract; the jq/curl/flock/setsid/sed shell-outs collapse into the stdlib (json/urllib/fcntl/subprocess/re), so the distiller is legible + testable and the dep surface shrinks to `python3` + the (guarded) `claude`/`sprite-env`. Rationale + benchmarks live on the closed `spike/client-language-comparison` branch. The bash→python move also fixed a **stale sweep-guard** (the skip-string had drifted from the distiller prompt → risk of re-ingesting the distiller's own `claude -p` transcripts); the guard is now derived from a shared `DISTILLER_MARKER` constant embedded in the prompt, so it can't drift again.
+- **Interactive memory is the agentmemory MCP now** — the client ships agentmemory's native MCP (overlay `managed-mcp.json` → `/etc/claude-code/managed-mcp.json`, root) so the agent gets the full `mcp__agentmemory__memory_*` toolset (search/save/governance-delete/consolidate/snapshot/audit). This came out of a real episode where a teammate's Claude had to reverse-engineer `/agentmemory/forget` to dedupe shared memory — MCP hands it those primitives directly. **Hooks stay** (deterministic auto-recall + passive distill; shell hooks can't call MCP tools, so they keep using `brain.py`'s REST paths). `brain.py` narrows to hooks + the `file` ingest verb. Delivery is **managed-exclusive** (only the brain MCP loads fleet-wide; `allowAllClaudeAiMcps` keeps claude.ai connectors); safe tools auto-approved via `permissions.allow`, `memory_governance_delete` left to prompt. New client dep: **node** (the `npx @agentmemory/mcp` proxy shim) + Claude Code ≥ 2.1.149.
 
 ## Open items (all that's left)
 1. **Redeploy `client/skills/team-brain/brain.py`** to existing clients and bake into the live overlay bundle. (The overlay now invokes `python3 …/brain.py`; the managed-settings hooks were updated to match. Earlier dogfood boxes ran the older bash client.)
@@ -28,7 +29,7 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
    - Fix: new sprites have `$HOME` owned by `ubuntu` not `sprite` → pip cache-permission warnings (installer uses `--no-cache-dir` to stay quiet, but the root cause is a Podclave initializer bug).
 
 ## Residual / known limitations (not blocking)
-- **Cross-session paraphrase dedup**: gateway dedup is lexical (token-set Jaccard ≥0.8) → catches exact/near-exact; loose paraphrases across different sessions can still double up. The dominant explicit+passive same-session dup IS handled (distiller excludes same-session `brain.py remember` calls). A future embedding-based dedup would close the rest.
+- **Dedup is now the engine's native job.** Our custom gateway `/remember` dedup was **removed** — it kept the *older* phrasing and pre-empted the engine's native supersession. agentmemory supersedes near-duplicates on write at **Jaccard ≥0.7** (marks old `isLatest=false`, bumps `version`, keeps the *newer* text). Remaining gap: cross-session **paraphrases** (<0.7 lexical, e.g. "Frontend is Next.js" vs "Project Atlas: the frontend is built with Next.js") still slip past both; agents can now collapse those via the MCP (`memory_governance_delete`, prompted). agentmemory's consolidation still does **not** merge near-dups (verified) — don't rely on it. A future embedding-based write-dedup would close the paraphrase gap.
 - **agentmemory's own consolidation does NOT merge near-duplicate memories** (verified) — don't rely on it for dedup.
 - Distiller fidelity uses **haiku** (cheap); occasional `[]` on borderline input. Bump via `BRAIN_DISTILL_MODEL` in `.env.podclave.brain` if needed (sonnet was observed *too* conservative — test before switching).
 
@@ -46,15 +47,29 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
 
 ## Architecture quick-map
 ```
-client VM: skills/team-brain/brain.py (one file: recall/remember/file/health +
-  hook-recall/hook-stop/hook-sessionend/hook-sessionstart + distill) + managed-settings.d hooks
-        │ HTTPS + bearer
+client VM: agentmemory MCP (managed-mcp.json → npx @agentmemory/mcp proxy shim:
+  interactive recall/save/curate) + brain.py (hooks: auto-recall/stop/sessionend/
+  sessionstart/distill, + file ingest) + managed-settings.d (hooks + MCP-tool perms)
+        │ HTTPS + bearer  (MCP → /agentmemory/mcp/* ; hooks/file → REST)
 brain box: gateway (server/gateway/app.py, :8080 public) — auth, /agentmemory/* passthrough
-  (with write-time dedup on /remember), /ingest, /docs, /viewer, /maintenance/run+status
+  (incl. /agentmemory/mcp/* + /livez), /ingest, /docs, /viewer, /maintenance/run+status
         ├─ agentmemory engine (:3111 internal, local embeddings, BM25+vector+graph)
         └─ viewer (:3113)
   data: ~/data (engine), ~/brain-docs (originals + manifest.db), ~/.agentmemory/.env (config+secret)
 ```
+
+## Future directions (ideas, not committed)
+- **Shrink the gateway toward viewer-only.** Now that interactive memory is the MCP,
+  the gateway's distinct value is mostly **document ingest** (`/ingest`, `/docs`) and
+  the **viewer** proxy (+ auth + the cataloger trigger). A cleaner future: drop
+  gateway-side ingest and instead have the **client distill a file and feed the
+  result into the MCP tools** (`memory_save`/`file`-style), at which point the gateway
+  is essentially just the **viewer** (which hasn't been exercised yet — reachable at
+  `<BRAIN_URL>/viewer`). Tradeoff: lose server-side pdf/docx/pptx extraction +
+  sha256-idempotent originals; gain one fewer bespoke endpoint.
+- **Embedding write-dedup** for the cross-session paraphrase gap (local embeddings are
+  already on the engine) — the one dedup case neither the engine's 0.7 supersession
+  nor the MCP curation catches automatically.
 
 ## Verify a running brain
 ```bash

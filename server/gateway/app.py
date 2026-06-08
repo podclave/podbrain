@@ -297,44 +297,19 @@ async def maintenance_status(authorization: str | None = Header(default=None)):
             "min_interval_secs": MAINT_MIN_SECS, "last_result": MAINT["last_result"]}
 
 
-# ---------- write-time dedup ----------
-# Both the explicit skill and the passive distiller POST /agentmemory/remember, and
-# agentmemory does NOT dedup on write (nor does consolidation merge near-duplicates).
-# So the gateway dedups here: a new fact whose token-set closely matches an existing
-# memory is dropped. Covers every client/path in one place.
-_PROV_RE = re.compile(r"\s*[—-]\[saved by[^\]]*\]\s*$")
-
-def _tokens(s: str) -> set:
-    s = _PROV_RE.sub("", s or "").lower()
-    return set(re.findall(r"[a-z0-9]+", s))
-
-def _is_dup(a: str, b: str, thresh: float = 0.8) -> bool:
-    ta, tb = _tokens(a), _tokens(b)
-    if not ta or not tb:
-        return False
-    inter = len(ta & tb)
-    return inter / len(ta | tb) >= thresh   # Jaccard over token sets
-
-
+# ---------- remember passthrough (write-count for the cataloger) ----------
+# We deliberately do NOT dedup here. agentmemory supersedes near-duplicates NATIVELY on
+# write (Jaccard >=0.7 -> marks the old memory isLatest=false, bumps version, keeps the
+# *newer* phrasing). Our previous token-set dedup pre-empted that path and kept the
+# OLDER text (and made supersedes look broken), so it's removed. This handler only
+# forwards and counts the write so the activity-triggered cataloger still fires.
+# (Interactive saves now go via the agentmemory MCP -> /agentmemory/mcp/call, which the
+# catch-all proxies; those aren't counted here, but the scheduled /maintenance/run
+# covers consolidation regardless.)
 @app.post("/agentmemory/remember")
-async def remember_dedup(request: Request, authorization: str | None = Header(default=None)):
+async def remember(request: Request, authorization: str | None = Header(default=None)):
     require_auth(authorization)
     body = await request.json()
-    content = body.get("content", "")
-    # Find candidates via semantic search, then token-set compare against their full text.
-    try:
-        sr = await am_post("/agentmemory/smart-search", {"query": content})
-        ids = [r.get("obsId") for r in (sr.json().get("results") or [])[:6] if r.get("obsId")]
-        async with httpx.AsyncClient(timeout=15) as c:
-            for mid in ids:
-                mr = await c.get(f"{AM_BASE}/agentmemory/memories/{mid}",
-                                 headers={"Authorization": f"Bearer {SECRET}"})
-                ex = mr.json()
-                existing = ex.get("content") or (ex.get("memory") or {}).get("content") or ""
-                if _is_dup(content, existing):
-                    return {"status": "duplicate", "id": mid, "deduped": True}
-    except Exception:  # noqa: BLE001 — dedup is best-effort; never block a write
-        pass
     r = await am_post("/agentmemory/remember", body)
     note_writes(1)
     try:
