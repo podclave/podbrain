@@ -5,6 +5,11 @@ no installer. Add these to the `team-brain` bundle. Relative paths
 land in `$HOME`; `.env.podclave.*` is auto-sourced into every shell; `brain.py`
 is always invoked via `python3 …` (stdlib only — no pip), so no executable bit is needed.
 
+**Fastest path:** on the brain box, `bash client/overlay_instructions.sh` prints all
+five overlays below — each with its destination path + owner, and the secrets file (#3)
+**pre-filled** with this brain's live `BRAIN_URL`/`BRAIN_SECRET` — ready to copy-paste
+into the Podclave bundle. (Run off-box, #3 falls back to the placeholder template.)
+
 | # | Overlay path | Owner | Contents = repo file |
 |---|---|---|---|
 | 1 | `.claude/skills/team-brain/SKILL.md` | user | `client/skills/team-brain/SKILL.md` |
