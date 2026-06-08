@@ -9,6 +9,8 @@ Routes (all bearer-gated except /healthz):
                         login via /viewer?key=<secret> (sets an HttpOnly cookie)
   /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111); accepts
                         bearer OR the viewer cookie (gateway injects the engine bearer)
+  /stream/*  (WS)       proxy the viewer's live-feed WebSocket to the streams worker
+                        (:3112); cookie-authed (browsers can't header-auth a WS)
 
 Design notes:
   - Extraction is server-side so client VMs stay thin (just upload bytes).
@@ -28,12 +30,20 @@ import time
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
+import websockets
+from fastapi import (FastAPI, Header, HTTPException, Request, UploadFile, File,
+                     Form, WebSocket, WebSocketDisconnect)
 from fastapi.responses import (JSONResponse, Response, FileResponse,
                                StreamingResponse, RedirectResponse)
 
 AM_BASE = os.environ.get("AM_BASE", "http://localhost:3111")
 VIEWER_BASE = os.environ.get("VIEWER_BASE", "http://localhost:3113")
+# The viewer's live-observation stream is a WebSocket served by the iii streams
+# worker at its ROOT (default :3112 = viewer port - 1). The browser, reached via the
+# gateway at a standard port, opens wss://<host>/stream/mem-live/viewer (same-origin);
+# we proxy that to the worker's root here so the live feed survives the single
+# published Sprite port.
+WS_UPSTREAM = os.environ.get("WS_UPSTREAM", "ws://localhost:3112")
 DOCS_DIR = Path(os.environ.get("BRAIN_DOCS_DIR", str(Path.home() / "brain-docs")))
 DB_PATH = DOCS_DIR / "manifest.db"
 CHUNK_TARGET = int(os.environ.get("BRAIN_CHUNK_CHARS", "1500"))
@@ -376,3 +386,45 @@ async def proxy_viewer(request: Request, path: str = "",
         return r
     require_auth_browser(request, authorization)
     return await _proxy(VIEWER_BASE, path, request, inject_auth=True)
+
+
+@app.websocket("/stream/{path:path}")
+async def proxy_stream_ws(ws: WebSocket, path: str):
+    # The viewer opens this same-origin WS for its live feed. Browsers can't set an
+    # Authorization header on a WS handshake, but the viewer cookie rides along; gate
+    # on it. The internal streams worker needs no auth, so we just bridge frames.
+    if SECRET and ws.cookies.get(VIEWER_COOKIE) != SECRET:
+        await ws.close(code=1008)  # policy violation
+        return
+    await ws.accept()
+    try:
+        async with websockets.connect(WS_UPSTREAM, open_timeout=10, max_size=None) as up:
+            async def c2u():
+                while True:
+                    msg = await ws.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        return
+                    if msg.get("text") is not None:
+                        await up.send(msg["text"])
+                    elif msg.get("bytes") is not None:
+                        await up.send(msg["bytes"])
+
+            async def u2c():
+                async for msg in up:
+                    if isinstance(msg, (bytes, bytearray)):
+                        await ws.send_bytes(msg)
+                    else:
+                        await ws.send_text(msg)
+
+            _, pending = await asyncio.wait(
+                {asyncio.create_task(c2u()), asyncio.create_task(u2c())},
+                return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except Exception:  # noqa: BLE001 — best-effort bridge; never crash the gateway
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass
