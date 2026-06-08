@@ -97,13 +97,40 @@ def api(path, method="GET", data=None, timeout=25):
 
 
 # --- core verbs --------------------------------------------------------------
+# Relevance gating for auto-injected recall. smart-search scores are small and
+# compressed on this engine (good hits ~0.01–0.02, with a long weakly-related tail),
+# so we drop results below an absolute floor AND below a relative band off the top
+# hit — otherwise every prompt pays tokens for near-irrelevant context. Both knobs
+# are env-tunable; calibrate against your brain's scale. Fail OPEN: a result with no
+# numeric score is always kept, so an unexpected response shape never empties recall.
+RECALL_MIN_SCORE = float(os.environ.get("BRAIN_RECALL_MIN_SCORE", "0.005"))
+RECALL_REL = float(os.environ.get("BRAIN_RECALL_REL", "0.6"))
+
+
+def _gate(results, k):
+    scores = [r.get("score") for r in results if isinstance(r.get("score"), (int, float))]
+    top = max(scores) if scores else None
+    kept = []
+    for r in results:
+        s = r.get("score")
+        if isinstance(s, (int, float)):
+            if s < RECALL_MIN_SCORE:
+                continue
+            if top and s < top * RECALL_REL:
+                continue
+        kept.append(r)
+        if len(kept) >= k:
+            break
+    return kept
+
+
 def do_recall(q, k=5):
     try:
         res = api("/agentmemory/smart-search", "POST", {"query": q})
     except Exception:
         return
-    ids = [r.get("obsId") for r in (res.get("results") or [])][:k]
-    for i in ids:
+    for r in _gate(res.get("results") or [], k):
+        i = r.get("obsId")
         if not i:
             continue
         try:
@@ -116,9 +143,16 @@ def do_recall(q, k=5):
             print("• " + c)
 
 
-def _save(text, typ="fact"):
-    body = "%s  —[saved by %s]" % (text, USER_ID)
-    return api("/agentmemory/remember", "POST", {"content": body, "type": typ})
+def _save(text, typ="fact", source="human"):
+    # Mark machine-distilled facts distinctly from human-vouched ones, so recall can
+    # weight them lower and curation can review/filter them. Carries BOTH a readable
+    # provenance tag and a structured source/tags (engine fields; harmless if ignored).
+    label = "auto-captured" if source == "auto" else "saved"
+    body = "%s  —[%s by %s]" % (text, label, USER_ID)
+    payload = {"content": body, "type": typ, "source": source}
+    if source == "auto":
+        payload["tags"] = ["auto-distill"]
+    return api("/agentmemory/remember", "POST", payload)
 
 
 def do_remember(text, typ="fact"):
@@ -149,11 +183,19 @@ def do_file(path, note=""):
 
 
 # --- distillation ------------------------------------------------------------
+# Regex backstop behind the LLM "no secrets" instruction. Specific patterns first,
+# broad ones last. Defense-in-depth on a SHARED brain: one leaked credential is
+# everyone's problem.
 SCRUB = [
-    (re.compile(r'sk-(?:ant-)?[A-Za-z0-9_-]{12,}'), '[REDACTED]'),
+    (re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----', re.S), '[REDACTED-PRIVATE-KEY]'),
+    (re.compile(r'sk-(?:ant-)?[A-Za-z0-9_-]{12,}'), '[REDACTED]'),          # OpenAI / Anthropic
+    (re.compile(r'gh[posru]_[A-Za-z0-9]{20,}'), '[REDACTED]'),              # GitHub (ghp_/gho_/ghs_/ghr_/ghu_)
+    (re.compile(r'xox[baprs]-[A-Za-z0-9-]{10,}'), '[REDACTED]'),            # Slack
+    (re.compile(r'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'), '[REDACTED-JWT]'),  # JWT
+    (re.compile(r'\b([a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:)[^/\s:@]+(@)'), r'\1[REDACTED]\2'),  # scheme://user:PASS@host
+    (re.compile(r'AKIA[0-9A-Z]{16}'), '[REDACTED]'),                        # AWS access key id
     (re.compile(r'([A-Za-z0-9_-]*(?:SECRET|TOKEN|PASSWORD|API_KEY|APIKEY)[A-Za-z0-9_-]*[=:]\s*)[^\s"]+', re.I), r'\1[REDACTED]'),
-    (re.compile(r'\b[0-9a-f]{32,}\b'), '[REDACTED]'),
-    (re.compile(r'AKIA[0-9A-Z]{16}'), '[REDACTED]'),
+    (re.compile(r'\b[0-9a-f]{32,}\b'), '[REDACTED]'),                       # generic long hex
 ]
 def scrub(s):
     for rx, rep in SCRUB:
@@ -266,7 +308,7 @@ def do_distill(sid, transcript):
         if not content:
             continue
         try:
-            _save(content, it.get("type") or "fact"); count += 1
+            _save(content, it.get("type") or "fact", source="auto"); count += 1
         except Exception:
             pass
     open(offset_file, "w").write(str(total))
@@ -309,6 +351,18 @@ def guard():
     return bool(os.environ.get("BRAIN_DISTILLER"))
 
 
+# Prompts not worth a recall round-trip or injected-context tokens (greetings/acks/
+# bare continuations). Skipping these is the safe half of the recall-relevance fix.
+_TRIVIAL = {"thanks", "thank you", "ty", "ok", "okay", "k", "cool", "nice", "great",
+            "yes", "no", "yep", "nope", "sure", "got it", "gotcha", "done", "yw", "np",
+            "perfect", "awesome", "lgtm", "ship it", "continue", "go", "go on",
+            "keep going", "next", "hi", "hey", "hello"}
+
+def is_trivial(prompt):
+    s = prompt.strip().lower().rstrip("!.?")
+    return s in _TRIVIAL or len(s.split()) < 2
+
+
 def main():
     global BRAIN_URL, BRAIN_SECRET, USER_ID
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
@@ -333,7 +387,7 @@ def main():
         if guard():
             return
         prompt = stdin_json().get("prompt") or ""
-        if not prompt:
+        if not prompt or is_trivial(prompt):
             return
         try:
             ctx = subprocess.run([sys.executable, SELF, "recall", prompt],
