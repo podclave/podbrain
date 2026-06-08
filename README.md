@@ -77,32 +77,23 @@ bash client/overlay_instructions.sh
 It prints all five overlays — each with its destination path + owner, pulled
 straight from the repo — and **pre-fills** the secrets file (`.env.podclave.brain`)
 with this brain's live `BRAIN_URL`/`BRAIN_SECRET`. Paste each block into the
-`team-brain` bundle in Podclave at the path it shows. That's the rollout.
-
-The five overlays (relative paths land in `$HOME`; `brain.py` is invoked via
-`python3 …`, so no executable bit is needed):
-
-| # | Overlay path | Owner | What it is |
-|---|---|---|---|
-| 1 | `.claude/skills/team-brain/SKILL.md` | user | skill: routes memory to the MCP; `file` → `brain.py` |
-| 2 | `.claude/skills/team-brain/brain.py` | user | stdlib-only hooks (auto-recall + passive distill) + `file` ingest |
-| 3 | `.env.podclave.brain` | user | `BRAIN_URL` + `BRAIN_SECRET`, auto-sourced into every shell |
-| 4 | `/etc/claude-code/managed-settings.d/20-team-brain.json` | **root** | hooks + MCP-tool permissions |
-| 5 | `/etc/claude-code/managed-mcp.json` | **root** | the agentmemory MCP (interactive memory) |
+`team-brain` bundle in Podclave at the path it shows (relative paths land in `$HOME`;
+`brain.py` runs via `python3 …`, so no executable bit is needed). That's the rollout.
 
 Key things to know:
 
 - **Overlays are byte-identical for the whole org.** Per-user attribution comes
   from `~/.podclave/user-email` (written by Podclave on Setup; falls back to git
   email / `$USER`), so there's no per-user config.
-- **#4 is `owner: root`** so users can't disable the hooks. Claude Code *combines*
-  hooks across all settings sources, so this file adds the auto-recall/auto-capture
-  hooks **without touching anyone's own `~/.claude/settings.json`**. It also carries
-  `permissions.allow` for the **safe** MCP tools (read + reversible curation);
-  `memory_governance_delete` and the agent-workflow tools are omitted, so they prompt.
-- **#5 is the agentmemory MCP** (`owner: root`) — a local `npx @agentmemory/mcp`
-  stdio shim in **proxy mode** against the shared brain (`AGENTMEMORY_FORCE_PROXY=1`,
-  `${BRAIN_URL}`/`${BRAIN_SECRET}` from #3). Caveats, all real:
+- **The two `/etc/claude-code/` files are `owner: root`** so users can't disable them.
+  `managed-settings.d/20-team-brain.json` adds the auto-recall/auto-capture hooks —
+  Claude Code *combines* hooks across all settings sources, so it never touches anyone's
+  own `~/.claude/settings.json` — plus `permissions.allow` for the **safe** MCP tools
+  (read + reversible curation); `memory_governance_delete` and the agent-workflow tools
+  are omitted, so they prompt.
+- **`managed-mcp.json` is the agentmemory MCP** — a local `npx @agentmemory/mcp` stdio
+  shim in **proxy mode** against the shared brain (`AGENTMEMORY_FORCE_PROXY=1`,
+  `${BRAIN_URL}`/`${BRAIN_SECRET}` from the env file). Caveats, all real:
   - **`managed-mcp.json` is EXCLUSIVE** — once deployed, Claude Code loads *only*
     the servers it defines; teammates' own local/project MCP servers stop loading.
     Add any other team MCP to this same file. `allowAllClaudeAiMcps: true` keeps
@@ -113,7 +104,7 @@ Key things to know:
 
 > **Single-VM dogfood without Podclave:** place the files yourself — copy
 > `client/skills/team-brain/{SKILL.md,brain.py}` to `~/.claude/skills/team-brain/`,
-> save block #3 from `overlay_instructions.sh` to `~/.env.podclave.brain`, and copy
+> save the `.env.podclave.brain` block from `overlay_instructions.sh` to `~/.env.podclave.brain`, and copy
 > `client/managed-settings.d/20-team-brain.json` + `client/managed-mcp.json` into
 > `/etc/claude-code/` (the latter as `/etc/claude-code/managed-mcp.json`, root).
 

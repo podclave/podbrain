@@ -5,9 +5,9 @@
 # Usage (after cloning podbrain on the server box):
 #   bash client/overlay_instructions.sh
 #
-# The mapping below is the authoritative bundle list; it mirrors the overlay table
-# in README.md — keep the two in sync. Contents come straight from the repo, so this
-# is always current with whatever you just pulled.
+# The mapping below is the authoritative bundle list (paths + owners) — README.md
+# describes what each overlay is and why. Contents come straight from the repo, so
+# this is always current with whatever you just pulled.
 set -euo pipefail
 
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
