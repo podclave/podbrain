@@ -8,19 +8,19 @@ description: THE memory system for this machine. Use it whenever the user asks t
 This is the **single source of truth for memory** on this machine. The native
 Claude auto-memory is disabled org-wide; **all** remembering and recalling goes
 through the shared team brain, so knowledge compounds across the whole team.
-Interact via `~/.claude/skills/team-brain/brain.sh`.
+Interact via `~/.claude/skills/team-brain/brain.py`.
 
 ## Always use it for
-- **Remember / save / "note that" / "don't forget"** → `bash ~/.claude/skills/team-brain/brain.sh remember "<concise atomic fact>" [fact|decision|lesson]`
-- **Recall / "what do we know about…" / "did we decide…" / look something up** → `bash ~/.claude/skills/team-brain/brain.sh recall "<query>"`
-- **"file this" / a document to absorb (PRD, deck, PDF, md)** → `bash ~/.claude/skills/team-brain/brain.sh file "<path>" "<optional note>"`
+- **Remember / save / "note that" / "don't forget"** → `python3 ~/.claude/skills/team-brain/brain.py remember "<concise atomic fact>" [fact|decision|lesson]`
+- **Recall / "what do we know about…" / "did we decide…" / look something up** → `python3 ~/.claude/skills/team-brain/brain.py recall "<query>"`
+- **"file this" / a document to absorb (PRD, deck, PDF, md)** → `python3 ~/.claude/skills/team-brain/brain.py file "<path>" "<optional note>"`
 - **Proactively**: recall relevant knowledge before non-trivial work on a shared project, convention, or prior decision.
 
 ## Commands
-- `bash ~/.claude/skills/team-brain/brain.sh recall "<query>"` → bulleted relevant memories.
-- `bash ~/.claude/skills/team-brain/brain.sh remember "<text>" [type]` → saves; prints id.
-- `bash ~/.claude/skills/team-brain/brain.sh file "<path>" "<note>"` → ingests a document.
-- `bash ~/.claude/skills/team-brain/brain.sh health` → service check.
+- `python3 ~/.claude/skills/team-brain/brain.py recall "<query>"` → bulleted relevant memories.
+- `python3 ~/.claude/skills/team-brain/brain.py remember "<text>" [type]` → saves; prints id.
+- `python3 ~/.claude/skills/team-brain/brain.py file "<path>" "<note>"` → ingests a document.
+- `python3 ~/.claude/skills/team-brain/brain.py health` → service check.
 
 ## Conventions
 - Memory means the team brain — never write to or create a local `MEMORY.md`/memory file; never tell the user you've saved something unless it went to the brain.

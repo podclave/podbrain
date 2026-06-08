@@ -30,13 +30,13 @@ curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory
 ## 2. Client config bundle (the overlay set)
 
 Add these **4 overlays** to the `team-brain` bundle. Relative paths
-land in `$HOME`; `.env.podclave.*` is auto-sourced into every shell. `brain.sh` is
-always invoked via `bash …/brain.sh`, so no executable bit is needed.
+land in `$HOME`; `.env.podclave.*` is auto-sourced into every shell. `brain.py` is
+always invoked via `python3 …/brain.py`, so no executable bit is needed.
 
 | # | Overlay path | Owner | Contents = repo file |
 |---|---|---|---|
 | 1 | `.claude/skills/team-brain/SKILL.md` | user | `client/skills/team-brain/SKILL.md` |
-| 2 | `.claude/skills/team-brain/brain.sh` | user | `client/skills/team-brain/brain.sh` |
+| 2 | `.claude/skills/team-brain/brain.py` | user | `client/skills/team-brain/brain.py` |
 | 3 | `.env.podclave.brain` | user | `client/env.podclave.brain.template` (fill URL + secret) |
 | 4 | `/etc/claude-code/managed-settings.d/20-team-brain.json` | **root** | `client/managed-settings.d/20-team-brain.json` |
 
@@ -48,7 +48,7 @@ export BRAIN_URL="https://<brain>.sprites.app"
 export BRAIN_SECRET="<secret>"
 ```
 
-Identity is **not** in the bundle — `brain.sh` reads `~/.podclave/user-email`
+Identity is **not** in the bundle — `brain.py` reads `~/.podclave/user-email`
 (written by Podclave on Setup), falling back to git email / `$USER`. So every
 teammate's overlays are byte-identical; attribution still works per-person.
 
@@ -58,10 +58,10 @@ touching anyone's own `~/.claude/settings.json`**. It's `owner: root` so users
 can't disable it; re-provisioning overwrites just this one file (idempotent).
 
 > Manual / single-VM dogfood (no overlay): place the same 4 files yourself —
-> copy `client/skills/team-brain/{SKILL.md,brain.sh}` to `~/.claude/skills/team-brain/`,
+> copy `client/skills/team-brain/{SKILL.md,brain.py}` to `~/.claude/skills/team-brain/`,
 > write `~/.env.podclave.brain` (URL + secret), and copy
 > `client/managed-settings.d/20-team-brain.json` to
-> `/etc/claude-code/managed-settings.d/` (root). Then `bash ~/.claude/skills/team-brain/brain.sh health`.
+> `/etc/claude-code/managed-settings.d/` (root). Then `python3 ~/.claude/skills/team-brain/brain.py health`.
 
 ## 3. Schedule the cataloger (Podclave per-Sprite Schedule)
 
@@ -89,9 +89,9 @@ Check it ran: `GET /maintenance/status` (with the bearer header) →
 After overlay Setup on a teammate VM:
 
 ```bash
-bash ~/.claude/skills/team-brain/brain.sh health      # -> {"status":"healthy"}
-bash ~/.claude/skills/team-brain/brain.sh remember "rollout smoke test from $(whoami)"
-bash ~/.claude/skills/team-brain/brain.sh recall "rollout smoke test"
+python3 ~/.claude/skills/team-brain/brain.py health      # -> {"status":"healthy"}
+python3 ~/.claude/skills/team-brain/brain.py remember "rollout smoke test from $(whoami)"
+python3 ~/.claude/skills/team-brain/brain.py recall "rollout smoke test"
 ```
 
 Then in a real Claude Code session on that VM:

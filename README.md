@@ -42,8 +42,9 @@ server/
 client/                    shipped as a Podclave config bundle (4 overlays)
   README.md                    the overlay manifest (path -> contents)
   skills/team-brain/SKILL.md   skill manifest
-  skills/team-brain/brain.sh   single-file client: recall/remember/file +
-                               hook-recall/hook-stop/hook-sessionend + distill
+  skills/team-brain/brain.py   single-file Python client (stdlib only): recall/
+                               remember/file/health + hook-{recall,stop,
+                               sessionend,sessionstart} + distill
   env.podclave.brain.template  -> ~/.env.podclave.brain (URL + secret, auto-sourced)
   managed-settings.d/20-team-brain.json  -> /etc/... (hooks, owner root, zero-merge)
 ```
@@ -83,7 +84,7 @@ After that, the teammate's Claude:
 - **auto-recalls** relevant team knowledge each turn (UserPromptSubmit hook),
 - **auto-captures** durable learnings after work (async Stop hook → local
   `claude -p` distiller → push; secrets scrubbed, only distilled facts leave the VM),
-- **recall / remember / file** on demand via the skill (`brain.sh`).
+- **recall / remember / file** on demand via the skill (`brain.py`).
 
 "File this <document>" → the file is uploaded to `/ingest`, extracted
 server-side (pdf/docx/pptx/md), chunked, stored, and made searchable.

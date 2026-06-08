@@ -15,9 +15,10 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
 - Server stands up from zero: `bash server/install-brain.sh` → prints `BRAIN_URL`/`BRAIN_SECRET`. Verified on a bare sprite.
 - Client = 4-overlay Podclave bundle (`client/`). Native auto-memory overtaken (`autoMemoryEnabled:false`).
 - Proven: cross-session recall, cross-fact synthesis, explicit + passive capture, doc ingest, dedup, keyless cataloger.
+- **Client is Python now** (`brain.py`, stdlib only) — migrated from the original bash `brain.sh` after a 3-way bash/python/elixir spike. Same CLI + hook contract; the jq/curl/flock/setsid/sed shell-outs collapse into the stdlib (json/urllib/fcntl/subprocess/re), so the distiller is legible + testable and the dep surface shrinks to `python3` + the (guarded) `claude`/`sprite-env`. Rationale + benchmarks live on the closed `spike/client-language-comparison` branch. The bash→python move also fixed a **stale sweep-guard** (the skip-string had drifted from the distiller prompt → risk of re-ingesting the distiller's own `claude -p` transcripts); the guard is now derived from a shared `DISTILLER_MARKER` constant embedded in the prompt, so it can't drift again.
 
 ## Open items (all that's left)
-1. **Redeploy `client/skills/team-brain/brain.sh`** (latest, commit history thru the "quality pass B") to existing clients and bake into the live overlay bundle. (Earlier client boxes ran older brain.sh during the dogfood.)
+1. **Redeploy `client/skills/team-brain/brain.py`** to existing clients and bake into the live overlay bundle. (The overlay now invokes `python3 …/brain.py`; the managed-settings hooks were updated to match. Earlier dogfood boxes ran the older bash client.)
 2. **Operator steps the installer can't do** (documented in ROLLOUT): set the brain Sprite to **public auth mode**; run `claude` once on the brain box so the **LLM cataloger** has an LLM (else consolidation degrades to no-op — everything else still works).
 3. **Pre-go-live purge** (optional): wipe the brain to a clean slate — stop both services, `find ~/data/state_store.db -type f -delete && find ~/brain-docs -type f -delete`, restart. (No per-id REST delete exists.)
 4. **Podclave-side (the platform owner's tasks):**
@@ -27,7 +28,7 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
    - Fix: new sprites have `$HOME` owned by `ubuntu` not `sprite` → pip cache-permission warnings (installer uses `--no-cache-dir` to stay quiet, but the root cause is a Podclave initializer bug).
 
 ## Residual / known limitations (not blocking)
-- **Cross-session paraphrase dedup**: gateway dedup is lexical (token-set Jaccard ≥0.8) → catches exact/near-exact; loose paraphrases across different sessions can still double up. The dominant explicit+passive same-session dup IS handled (distiller excludes same-session `brain.sh remember` calls). A future embedding-based dedup would close the rest.
+- **Cross-session paraphrase dedup**: gateway dedup is lexical (token-set Jaccard ≥0.8) → catches exact/near-exact; loose paraphrases across different sessions can still double up. The dominant explicit+passive same-session dup IS handled (distiller excludes same-session `brain.py remember` calls). A future embedding-based dedup would close the rest.
 - **agentmemory's own consolidation does NOT merge near-duplicate memories** (verified) — don't rely on it for dedup.
 - Distiller fidelity uses **haiku** (cheap); occasional `[]` on borderline input. Bump via `BRAIN_DISTILL_MODEL` in `.env.podclave.brain` if needed (sonnet was observed *too* conservative — test before switching).
 
@@ -45,7 +46,7 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
 
 ## Architecture quick-map
 ```
-client VM: skills/team-brain/brain.sh (one file: recall/remember/file/health +
+client VM: skills/team-brain/brain.py (one file: recall/remember/file/health +
   hook-recall/hook-stop/hook-sessionend/hook-sessionstart + distill) + managed-settings.d hooks
         │ HTTPS + bearer
 brain box: gateway (server/gateway/app.py, :8080 public) — auth, /agentmemory/* passthrough
