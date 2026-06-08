@@ -97,10 +97,11 @@ cat <<EOF
   ---------------------------------------------------------------------
   Next:
    1. Ensure this Sprite is in PUBLIC auth mode (bearer is the gatekeeper).
-   2. Put the two values above into the client bundle's .env.podclave.brain
-      overlay (see ../client/README.md), and set the cataloger Schedule to
-      POST ${URL:-<url>}/maintenance/run with header
-      'Authorization: Bearer $SECRET' (see ../docs/ROLLOUT.md).
+   2. Render the client overlays:  bash client/overlay_instructions.sh
+      (#3 .env.podclave.brain is pre-filled with the values above), then
+      paste each block into the Podclave team-brain bundle.
+   3. Set the cataloger Schedule to POST ${URL:-<url>}/maintenance/run
+      with header 'Authorization: Bearer $SECRET'.   Full guide: ./README.md
   Verify:  curl -H "Authorization: Bearer $SECRET" ${URL:-<url>}/agentmemory/health
 =========================================================================
 EOF

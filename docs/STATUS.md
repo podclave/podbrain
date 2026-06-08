@@ -9,7 +9,7 @@ at one bearer-gated URL; it auto-recalls shared knowledge, auto-captures durable
 facts from real work, ingests docs, and self-curates. Built on
 [`@agentmemory/agentmemory`](https://github.com/rohitg00/agentmemory) (the engine)
 wrapped by our FastAPI **gateway** (the value-add: auth, ingest, the browser viewer/dashboard, cataloger).
-Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
+Architecture + rollout: see `README.md` (the single self-contained setup doc).
 
 ## Status: WORKING, proven end-to-end on a real client→server deployment
 - Server stands up from zero: `bash server/install-brain.sh` → prints `BRAIN_URL`/`BRAIN_SECRET`. Verified on a bare sprite.
@@ -21,10 +21,10 @@ Architecture + rollout: see `README.md`, `docs/ROLLOUT.md`, `client/README.md`.
 
 ## Open items (all that's left)
 1. **Redeploy `client/skills/team-brain/brain.py`** to existing clients and bake into the live overlay bundle. (The overlay now invokes `python3 …/brain.py`; the managed-settings hooks were updated to match. Earlier dogfood boxes ran the older bash client.)
-2. **Operator steps the installer can't do** (documented in ROLLOUT): set the brain Sprite to **public auth mode**; run `claude` once on the brain box so the **LLM cataloger** has an LLM (else consolidation degrades to no-op — everything else still works).
+2. **Operator steps the installer can't do** (documented in README): set the brain Sprite to **public auth mode**; run `claude` once on the brain box so the **LLM cataloger** has an LLM (else consolidation degrades to no-op — everything else still works).
 3. **Pre-go-live purge** (optional): wipe the brain to a clean slate — stop both services, `find ~/data/state_store.db -type f -delete && find ~/brain-docs -type f -delete`, restart. (No per-id REST delete exists.)
 4. **Podclave-side (the platform owner's tasks):**
-   - Support overlay drops to `/etc/claude-code/managed-settings.d/<name>.json` with `owner: root` (managed scope) — for hooks + `autoMemoryEnabled:false`. (Was being done by mutating `~/.claude`; managed scope is better — see the snippet in git history / ROLLOUT.)
+   - Support overlay drops to `/etc/claude-code/managed-settings.d/<name>.json` with `owner: root` (managed scope) — for hooks + `autoMemoryEnabled:false`. (Was being done by mutating `~/.claude`; managed scope is better — see git history.)
    - Write the teammate's email to `~/.podclave/user-email` on setup (drives attribution; client is identical org-wide otherwise).
    - Scheduler that does `POST <BRAIN_URL>/maintenance/run` with header `Authorization: Bearer <secret>` on a cadence (runs the cataloger; also wakes a suspended brain box). `GET /maintenance/status` to check.
    - Fix: new sprites have `$HOME` owned by `ubuntu` not `sprite` → pip cache-permission warnings (installer uses `--no-cache-dir` to stay quiet, but the root cause is a Podclave initializer bug).

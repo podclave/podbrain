@@ -32,34 +32,31 @@ a single spin-down Sprite, keyless (local embeddings + the Claude subscription).
 - **Gateway (ours):** auth, document ingest/retrieval, viewer proxy, and the activity-triggered cataloger. This is the productized layer.
 - **Keyless:** no API keys. Embeddings run locally; the LLM cataloger uses the Claude subscription on the box (`AGENTMEMORY_PROVIDER=agent-sdk`).
 
-## Repo layout
+## Setup at a glance
 
 ```
-server/
-  install-brain.sh         one-shot, idempotent server provisioner
-  gateway/app.py           the FastAPI gateway
-  gateway/requirements.txt pinned deps
-client/                    shipped as a Podclave config bundle (5 overlays)
-  README.md                    the overlay manifest (path -> contents)
-  skills/team-brain/SKILL.md   skill manifest (routes memory to the MCP; file -> brain.py)
-  skills/team-brain/brain.py   single-file Python (stdlib): the deterministic hooks
-                               (auto-recall + passive distill) + file ingest
-  env.podclave.brain.template  -> ~/.env.podclave.brain (URL + secret, auto-sourced)
-  managed-settings.d/20-team-brain.json  -> /etc/... (hooks + MCP-tool perms, owner root)
-  managed-mcp.json             -> /etc/claude-code/managed-mcp.json (the agentmemory MCP, owner root)
+git clone → bash server/install-brain.sh → bash client/overlay_instructions.sh → paste into Podclave → done
 ```
 
-See [client/README.md](client/README.md) for the overlay manifest and
-[docs/ROLLOUT.md](docs/ROLLOUT.md) for the full rollout.
+Stand up the server once, then drop the client overlay bundle into your Podclave
+org so every teammate's Claude Code is wired up. Details below.
 
-## Stand up a new brain (server)
+## 1. Stand up the server
 
-On a fresh Sprite, from a checkout:
+On a fresh Sprite in **public URL mode** (the bearer secret is the gatekeeper):
 
 ```bash
-bash server/install-brain.sh         # installs engine, gateway, both services
-# prints the generated bearer secret + public URL
+git clone https://github.com/podclave/podbrain.git && cd podbrain
+bash server/install-brain.sh        # installs the engine, gateway, and both services
 ```
+
+The installer is idempotent and prints a `BRAIN_URL` + `BRAIN_SECRET` block at the
+end (the secret is also at `~/.agentmemory/team_secret.txt`).
+
+**Two things the installer can't do itself:**
+
+- **Set public auth mode** — on the Sprite/Podclave side. Without it, clients can't reach the brain.
+- **Log `claude` in on the brain box** — the LLM cataloger (`AGENTMEMORY_PROVIDER=agent-sdk`) runs `claude` here. Capture/recall/ingest all work without it, but deep consolidation silently degrades to a no-op. Run `claude` once to log in.
 
 Verify:
 
@@ -68,41 +65,123 @@ curl https://<brain>.sprites.app/healthz
 curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory/health
 ```
 
-## Onboard a teammate (client)
+## 2. Roll out to the team (client overlay bundle)
 
-Rollout is via a **Podclave config bundle** — 5 overlays, no installer. See
-[client/README.md](client/README.md) for the exact overlay manifest (path →
-contents) and [docs/ROLLOUT.md](docs/ROLLOUT.md) for the full rollout (server,
-schedule, verification).
+The client ships as a **Podclave config bundle** — 5 overlay files, no installer.
+On the brain box, render them all:
 
-Per-user attribution comes from `~/.podclave/user-email` (no per-user config), so
-every teammate's overlays are byte-identical. Claude Code **combines** hooks
-across settings sources, so the `/etc` hooks file never touches anyone's own
-`settings.json`.
+```bash
+bash client/overlay_instructions.sh
+```
 
-After that, the teammate's Claude:
-- **auto-recalls** relevant team knowledge each turn (UserPromptSubmit hook),
-- **auto-captures** durable learnings after work (async Stop hook → local
-  `claude -p` distiller → push; secrets scrubbed, only distilled facts leave the VM),
-- **recalls / saves / curates** on demand via the **agentmemory MCP** (the native
-  `memory_*` toolset — search, save, governance-delete, consolidate, snapshot, audit),
-- **ingests documents** via `brain.py file <path>` (the one capability not in the MCP).
+It prints all five overlays — each with its destination path + owner, pulled
+straight from the repo — and **pre-fills** the secrets file (`.env.podclave.brain`)
+with this brain's live `BRAIN_URL`/`BRAIN_SECRET`. Paste each block into the
+`team-brain` bundle in Podclave at the path it shows. That's the rollout.
 
-"File this <document>" → the file is uploaded to `/ingest`, extracted
-server-side (pdf/docx/pptx/md), chunked, stored, and made searchable via the MCP.
+The five overlays (relative paths land in `$HOME`; `brain.py` is invoked via
+`python3 …`, so no executable bit is needed):
 
-## The cataloger
+| # | Overlay path | Owner | What it is |
+|---|---|---|---|
+| 1 | `.claude/skills/team-brain/SKILL.md` | user | skill: routes memory to the MCP; `file` → `brain.py` |
+| 2 | `.claude/skills/team-brain/brain.py` | user | stdlib-only hooks (auto-recall + passive distill) + `file` ingest |
+| 3 | `.env.podclave.brain` | user | `BRAIN_URL` + `BRAIN_SECRET`, auto-sourced into every shell |
+| 4 | `/etc/claude-code/managed-settings.d/20-team-brain.json` | **root** | hooks + MCP-tool permissions |
+| 5 | `/etc/claude-code/managed-mcp.json` | **root** | the agentmemory MCP (interactive memory) |
 
-The gateway runs consolidation when the box is already awake (spin-down-native):
-after `BRAIN_MAINT_WRITES` (default 20) writes and `BRAIN_MAINT_MIN_SECS`
-(default 1800) elapsed, it runs `consolidate-pipeline → reflect → auto-forget`
-in the background, holding a Sprite keep-alive task so the box can't suspend
-mid-run. For guaranteed runs, hit `POST /maintenance/run` from an external
-scheduler. `GET /maintenance/status` reports state.
+Key things to know:
 
-## Notes
+- **Overlays are byte-identical for the whole org.** Per-user attribution comes
+  from `~/.podclave/user-email` (written by Podclave on Setup; falls back to git
+  email / `$USER`), so there's no per-user config.
+- **#4 is `owner: root`** so users can't disable the hooks. Claude Code *combines*
+  hooks across all settings sources, so this file adds the auto-recall/auto-capture
+  hooks **without touching anyone's own `~/.claude/settings.json`**. It also carries
+  `permissions.allow` for the **safe** MCP tools (read + reversible curation);
+  `memory_governance_delete` and the agent-workflow tools are omitted, so they prompt.
+- **#5 is the agentmemory MCP** (`owner: root`) — a local `npx @agentmemory/mcp`
+  stdio shim in **proxy mode** against the shared brain (`AGENTMEMORY_FORCE_PROXY=1`,
+  `${BRAIN_URL}`/`${BRAIN_SECRET}` from #3). Caveats, all real:
+  - **`managed-mcp.json` is EXCLUSIVE** — once deployed, Claude Code loads *only*
+    the servers it defines; teammates' own local/project MCP servers stop loading.
+    Add any other team MCP to this same file. `allowAllClaudeAiMcps: true` keeps
+    users' claude.ai connectors.
+  - Managed MCP servers are **auto-trusted** (no per-user approval prompt).
+  - Needs **node** on the client (the shim; `npx -y` self-fetches on first use) and
+    Claude Code **≥ 2.1.149** (for `allowAllClaudeAiMcps`).
 
-- Sprite auth mode is `public`; the **bearer secret is the gatekeeper**. Rotate by
-  editing `~/.agentmemory/team_secret.txt` + `.env` and restarting both services.
-- Secrets never live in this repo: the server generates its own; `brain.env` is
-  rendered per-VM from env (`brain.env.template` is the placeholder form).
+> **Single-VM dogfood without Podclave:** place the files yourself — copy
+> `client/skills/team-brain/{SKILL.md,brain.py}` to `~/.claude/skills/team-brain/`,
+> save block #3 from `overlay_instructions.sh` to `~/.env.podclave.brain`, and copy
+> `client/managed-settings.d/20-team-brain.json` + `client/managed-mcp.json` into
+> `/etc/claude-code/` (the latter as `/etc/claude-code/managed-mcp.json`, root).
+
+## 3. Schedule the cataloger
+
+The gateway runs consolidation on its own when the box is already awake (after
+`BRAIN_MAINT_WRITES`, default 20, writes and `BRAIN_MAINT_MIN_SECS`, default 1800,
+elapsed: `consolidate-pipeline → reflect → auto-forget`, holding a Sprite keep-alive
+so it can't suspend mid-run). For **guaranteed** runs, point a Podclave per-Sprite
+Schedule at the brain:
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| Path | `/maintenance/run` |
+| Interval | e.g. `3600` (hourly) or `21600` (6h) — min 60s |
+| Headers | `Authorization: Bearer <secret>` |
+
+The `Authorization` header is **required** (the path is bearer-gated → 401 without
+it). The scheduled POST also wakes a suspended box, so the full spin-down → wake →
+catalog → keep-alive → re-suspend loop closes on its own; the cataloger no-ops
+cheaply when there's nothing new. Check state: `GET /maintenance/status`.
+
+## 4. Verify a teammate VM
+
+After overlay Setup on a teammate's VM:
+
+```bash
+python3 ~/.claude/skills/team-brain/brain.py health    # gateway reachable → {"status":"healthy"}
+```
+
+Then in a real Claude Code session there:
+
+- run `/mcp` → the `agentmemory` server shows **connected** (proxying to the brain).
+  A local/7-tool fallback means the `livez` probe failed — check `BRAIN_URL`/`BRAIN_SECRET`.
+- "remember `<fact>`" then "what do we know about `<topic>`" → it uses
+  `memory_save` / `memory_smart_search`.
+- ask about a known project area → expect a `<team-brain-context>` block (auto-recall hook).
+- state a decision and end the turn → after ~90s the async capture distills durable
+  learnings and pushes them (secrets scrubbed; only distilled facts leave the VM).
+- "file this `<path>`" → `brain.py file` ingests it server-side (pdf/docx/pptx/md),
+  and its contents become searchable via the MCP.
+
+## 5. Rotate the secret
+
+```bash
+openssl rand -hex 24 > ~/.agentmemory/team_secret.txt          # on the brain Sprite
+# update AGENTMEMORY_SECRET in ~/.agentmemory/.env, then:
+sprite-env services restart agentmemory && sprite-env services restart team-brain
+```
+
+Then re-run `client/overlay_instructions.sh` to get the new #3, update that overlay
+and the Schedule's `Authorization` header, and re-run Setup.
+
+## Repo layout
+
+```
+server/
+  install-brain.sh         one-shot, idempotent server provisioner
+  gateway/app.py           the FastAPI gateway
+  gateway/requirements.txt pinned deps
+client/
+  overlay_instructions.sh  prints the 5 client overlays for the Podclave bundle
+  skills/team-brain/SKILL.md   skill manifest (routes memory to the MCP; file → brain.py)
+  skills/team-brain/brain.py   single-file Python (stdlib): hooks + file ingest
+  env.podclave.brain.template  → ~/.env.podclave.brain (URL + secret, auto-sourced)
+  managed-settings.d/20-team-brain.json  → /etc/... (hooks + MCP-tool perms, root)
+  managed-mcp.json             → /etc/claude-code/managed-mcp.json (the agentmemory MCP, root)
+docs/
+  STATUS.md                project status, handoff, and hard-won design lessons
+```
