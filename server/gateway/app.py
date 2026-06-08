@@ -5,8 +5,10 @@ Routes (all bearer-gated except /healthz):
   /ingest/upload        POST multipart: extract -> chunk -> store original -> push to agentmemory
   /docs/{doc_id}        GET original file back
   /docs                 GET manifest (list of ingested docs)
-  /viewer, /viewer/*    reverse-proxy to the agentmemory viewer (:3113)
-  /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111)
+  /viewer, /viewer/*    reverse-proxy to the agentmemory viewer (:3113); browser
+                        login via /viewer?key=<secret> (sets an HttpOnly cookie)
+  /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111); accepts
+                        bearer OR the viewer cookie (gateway injects the engine bearer)
 
 Design notes:
   - Extraction is server-side so client VMs stay thin (just upload bytes).
@@ -27,7 +29,8 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import JSONResponse, Response, FileResponse, StreamingResponse
+from fastapi.responses import (JSONResponse, Response, FileResponse,
+                               StreamingResponse, RedirectResponse)
 
 AM_BASE = os.environ.get("AM_BASE", "http://localhost:3111")
 VIEWER_BASE = os.environ.get("VIEWER_BASE", "http://localhost:3113")
@@ -65,6 +68,25 @@ def require_auth(authorization: str | None):
     if not SECRET:
         return  # unconfigured: fail open only if no secret set (dev)
     if authorization != f"Bearer {SECRET}":
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
+# Browser access to the viewer can't send a bearer header, so the viewer + the
+# /agentmemory/* calls its JS makes also accept an HttpOnly cookie set via
+# /viewer?key=<secret>. The cookie carries the shared secret (admin/ops-grade — fine
+# for who reaches the dashboard; per-user gating would be a later thing).
+VIEWER_COOKIE = "brain_viewer"
+
+
+def authed(request: Request, authorization: str | None) -> bool:
+    if not SECRET:
+        return True
+    return (authorization == f"Bearer {SECRET}"
+            or request.cookies.get(VIEWER_COOKIE) == SECRET)
+
+
+def require_auth_browser(request: Request, authorization: str | None):
+    if not authed(request, authorization):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
@@ -270,11 +292,16 @@ async def get_doc(doc_id: str, authorization: str | None = Header(default=None))
 
 
 # ---------- reverse proxies ----------
-async def _proxy(base: str, path: str, request: Request) -> Response:
+async def _proxy(base: str, path: str, request: Request, inject_auth: bool = False) -> Response:
     url = f"{base}/{path}"
     body = await request.body()
     headers = {k: v for k, v in request.headers.items()
                if k.lower() not in ("host", "content-length")}
+    if inject_auth and SECRET:
+        # Gateway authenticates to the engine itself, regardless of how the client
+        # authed to the gateway (bearer OR viewer cookie) — so browser/cookie requests
+        # still satisfy the engine's own bearer check upstream.
+        headers["authorization"] = f"Bearer {SECRET}"
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.request(request.method, url, content=body, headers=headers,
                             params=request.query_params)
@@ -322,14 +349,30 @@ async def remember(request: Request, authorization: str | None = Header(default=
                methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy_am(path: str, request: Request,
                    authorization: str | None = Header(default=None)):
-    require_auth(authorization)  # gateway enforces; agentmemory also checks
-    resp = await _proxy(f"{AM_BASE}/agentmemory", path, request)
-    return resp
+    require_auth_browser(request, authorization)  # bearer OR viewer cookie
+    # inject_auth so the viewer's cookie-authed XHRs still satisfy the engine bearer.
+    return await _proxy(f"{AM_BASE}/agentmemory", path, request, inject_auth=True)
+
+
+@app.get("/favicon.svg")
+async def favicon(request: Request):
+    return await _proxy(VIEWER_BASE, "favicon.svg", request)  # cosmetic; unauth
 
 
 @app.api_route("/viewer", methods=["GET"])
 @app.api_route("/viewer/{path:path}", methods=["GET"])
 async def proxy_viewer(request: Request, path: str = "",
                        authorization: str | None = Header(default=None)):
-    require_auth(authorization)
-    return await _proxy(VIEWER_BASE, path, request)
+    # Browser login: /viewer?key=<secret> sets an HttpOnly cookie and redirects
+    # (303) to a clean URL so the secret never lingers in the address bar / history.
+    key = request.query_params.get("key")
+    if key is not None:
+        if SECRET and key != SECRET:
+            raise HTTPException(status_code=401, detail="bad key")
+        dest = "/viewer/" + path if path else "/viewer"
+        r = RedirectResponse(url=dest, status_code=303)
+        r.set_cookie(VIEWER_COOKIE, SECRET, httponly=True, secure=True,
+                     samesite="lax", max_age=86400, path="/")
+        return r
+    require_auth_browser(request, authorization)
+    return await _proxy(VIEWER_BASE, path, request, inject_auth=True)
