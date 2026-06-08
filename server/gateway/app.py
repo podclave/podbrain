@@ -5,8 +5,12 @@ Routes (all bearer-gated except /healthz):
   /ingest/upload        POST multipart: extract -> chunk -> store original -> push to agentmemory
   /docs/{doc_id}        GET original file back
   /docs                 GET manifest (list of ingested docs)
-  /viewer, /viewer/*    reverse-proxy to the agentmemory viewer (:3113)
-  /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111)
+  /viewer, /viewer/*    reverse-proxy to the agentmemory viewer (:3113); browser
+                        login via /viewer?key=<secret> (sets an HttpOnly cookie)
+  /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111); accepts
+                        bearer OR the viewer cookie (gateway injects the engine bearer)
+  /stream/*  (WS)       proxy the viewer's live-feed WebSocket to the streams worker
+                        (:3112); cookie-authed (browsers can't header-auth a WS)
 
 Design notes:
   - Extraction is server-side so client VMs stay thin (just upload bytes).
@@ -26,11 +30,20 @@ import time
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import JSONResponse, Response, FileResponse, StreamingResponse
+import websockets
+from fastapi import (FastAPI, Header, HTTPException, Request, UploadFile, File,
+                     Form, WebSocket, WebSocketDisconnect)
+from fastapi.responses import (JSONResponse, Response, FileResponse,
+                               StreamingResponse, RedirectResponse)
 
 AM_BASE = os.environ.get("AM_BASE", "http://localhost:3111")
 VIEWER_BASE = os.environ.get("VIEWER_BASE", "http://localhost:3113")
+# The viewer's live-observation stream is a WebSocket served by the iii streams
+# worker at its ROOT (default :3112 = viewer port - 1). The browser, reached via the
+# gateway at a standard port, opens wss://<host>/stream/mem-live/viewer (same-origin);
+# we proxy that to the worker's root here so the live feed survives the single
+# published Sprite port.
+WS_UPSTREAM = os.environ.get("WS_UPSTREAM", "ws://localhost:3112")
 DOCS_DIR = Path(os.environ.get("BRAIN_DOCS_DIR", str(Path.home() / "brain-docs")))
 DB_PATH = DOCS_DIR / "manifest.db"
 CHUNK_TARGET = int(os.environ.get("BRAIN_CHUNK_CHARS", "1500"))
@@ -65,6 +78,25 @@ def require_auth(authorization: str | None):
     if not SECRET:
         return  # unconfigured: fail open only if no secret set (dev)
     if authorization != f"Bearer {SECRET}":
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
+# Browser access to the viewer can't send a bearer header, so the viewer + the
+# /agentmemory/* calls its JS makes also accept an HttpOnly cookie set via
+# /viewer?key=<secret>. The cookie carries the shared secret (admin/ops-grade — fine
+# for who reaches the dashboard; per-user gating would be a later thing).
+VIEWER_COOKIE = "brain_viewer"
+
+
+def authed(request: Request, authorization: str | None) -> bool:
+    if not SECRET:
+        return True
+    return (authorization == f"Bearer {SECRET}"
+            or request.cookies.get(VIEWER_COOKIE) == SECRET)
+
+
+def require_auth_browser(request: Request, authorization: str | None):
+    if not authed(request, authorization):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
@@ -270,11 +302,16 @@ async def get_doc(doc_id: str, authorization: str | None = Header(default=None))
 
 
 # ---------- reverse proxies ----------
-async def _proxy(base: str, path: str, request: Request) -> Response:
+async def _proxy(base: str, path: str, request: Request, inject_auth: bool = False) -> Response:
     url = f"{base}/{path}"
     body = await request.body()
     headers = {k: v for k, v in request.headers.items()
                if k.lower() not in ("host", "content-length")}
+    if inject_auth and SECRET:
+        # Gateway authenticates to the engine itself, regardless of how the client
+        # authed to the gateway (bearer OR viewer cookie) — so browser/cookie requests
+        # still satisfy the engine's own bearer check upstream.
+        headers["authorization"] = f"Bearer {SECRET}"
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.request(request.method, url, content=body, headers=headers,
                             params=request.query_params)
@@ -297,44 +334,19 @@ async def maintenance_status(authorization: str | None = Header(default=None)):
             "min_interval_secs": MAINT_MIN_SECS, "last_result": MAINT["last_result"]}
 
 
-# ---------- write-time dedup ----------
-# Both the explicit skill and the passive distiller POST /agentmemory/remember, and
-# agentmemory does NOT dedup on write (nor does consolidation merge near-duplicates).
-# So the gateway dedups here: a new fact whose token-set closely matches an existing
-# memory is dropped. Covers every client/path in one place.
-_PROV_RE = re.compile(r"\s*[—-]\[saved by[^\]]*\]\s*$")
-
-def _tokens(s: str) -> set:
-    s = _PROV_RE.sub("", s or "").lower()
-    return set(re.findall(r"[a-z0-9]+", s))
-
-def _is_dup(a: str, b: str, thresh: float = 0.8) -> bool:
-    ta, tb = _tokens(a), _tokens(b)
-    if not ta or not tb:
-        return False
-    inter = len(ta & tb)
-    return inter / len(ta | tb) >= thresh   # Jaccard over token sets
-
-
+# ---------- remember passthrough (write-count for the cataloger) ----------
+# We deliberately do NOT dedup here. agentmemory supersedes near-duplicates NATIVELY on
+# write (Jaccard >=0.7 -> marks the old memory isLatest=false, bumps version, keeps the
+# *newer* phrasing). Our previous token-set dedup pre-empted that path and kept the
+# OLDER text (and made supersedes look broken), so it's removed. This handler only
+# forwards and counts the write so the activity-triggered cataloger still fires.
+# (Interactive saves now go via the agentmemory MCP -> /agentmemory/mcp/call, which the
+# catch-all proxies; those aren't counted here, but the scheduled /maintenance/run
+# covers consolidation regardless.)
 @app.post("/agentmemory/remember")
-async def remember_dedup(request: Request, authorization: str | None = Header(default=None)):
+async def remember(request: Request, authorization: str | None = Header(default=None)):
     require_auth(authorization)
     body = await request.json()
-    content = body.get("content", "")
-    # Find candidates via semantic search, then token-set compare against their full text.
-    try:
-        sr = await am_post("/agentmemory/smart-search", {"query": content})
-        ids = [r.get("obsId") for r in (sr.json().get("results") or [])[:6] if r.get("obsId")]
-        async with httpx.AsyncClient(timeout=15) as c:
-            for mid in ids:
-                mr = await c.get(f"{AM_BASE}/agentmemory/memories/{mid}",
-                                 headers={"Authorization": f"Bearer {SECRET}"})
-                ex = mr.json()
-                existing = ex.get("content") or (ex.get("memory") or {}).get("content") or ""
-                if _is_dup(content, existing):
-                    return {"status": "duplicate", "id": mid, "deduped": True}
-    except Exception:  # noqa: BLE001 — dedup is best-effort; never block a write
-        pass
     r = await am_post("/agentmemory/remember", body)
     note_writes(1)
     try:
@@ -347,14 +359,72 @@ async def remember_dedup(request: Request, authorization: str | None = Header(de
                methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy_am(path: str, request: Request,
                    authorization: str | None = Header(default=None)):
-    require_auth(authorization)  # gateway enforces; agentmemory also checks
-    resp = await _proxy(f"{AM_BASE}/agentmemory", path, request)
-    return resp
+    require_auth_browser(request, authorization)  # bearer OR viewer cookie
+    # inject_auth so the viewer's cookie-authed XHRs still satisfy the engine bearer.
+    return await _proxy(f"{AM_BASE}/agentmemory", path, request, inject_auth=True)
+
+
+@app.get("/favicon.svg")
+async def favicon(request: Request):
+    return await _proxy(VIEWER_BASE, "favicon.svg", request)  # cosmetic; unauth
 
 
 @app.api_route("/viewer", methods=["GET"])
 @app.api_route("/viewer/{path:path}", methods=["GET"])
 async def proxy_viewer(request: Request, path: str = "",
                        authorization: str | None = Header(default=None)):
-    require_auth(authorization)
-    return await _proxy(VIEWER_BASE, path, request)
+    # Browser login: /viewer?key=<secret> sets an HttpOnly cookie and redirects
+    # (303) to a clean URL so the secret never lingers in the address bar / history.
+    key = request.query_params.get("key")
+    if key is not None:
+        if SECRET and key != SECRET:
+            raise HTTPException(status_code=401, detail="bad key")
+        dest = "/viewer/" + path if path else "/viewer"
+        r = RedirectResponse(url=dest, status_code=303)
+        r.set_cookie(VIEWER_COOKIE, SECRET, httponly=True, secure=True,
+                     samesite="lax", max_age=86400, path="/")
+        return r
+    require_auth_browser(request, authorization)
+    return await _proxy(VIEWER_BASE, path, request, inject_auth=True)
+
+
+@app.websocket("/stream/{path:path}")
+async def proxy_stream_ws(ws: WebSocket, path: str):
+    # The viewer opens this same-origin WS for its live feed. Browsers can't set an
+    # Authorization header on a WS handshake, but the viewer cookie rides along; gate
+    # on it. The internal streams worker needs no auth, so we just bridge frames.
+    if SECRET and ws.cookies.get(VIEWER_COOKIE) != SECRET:
+        await ws.close(code=1008)  # policy violation
+        return
+    await ws.accept()
+    try:
+        async with websockets.connect(WS_UPSTREAM, open_timeout=10, max_size=None) as up:
+            async def c2u():
+                while True:
+                    msg = await ws.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        return
+                    if msg.get("text") is not None:
+                        await up.send(msg["text"])
+                    elif msg.get("bytes") is not None:
+                        await up.send(msg["bytes"])
+
+            async def u2c():
+                async for msg in up:
+                    if isinstance(msg, (bytes, bytearray)):
+                        await ws.send_bytes(msg)
+                    else:
+                        await ws.send_text(msg)
+
+            _, pending = await asyncio.wait(
+                {asyncio.create_task(c2u()), asyncio.create_task(u2c())},
+                return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except Exception:  # noqa: BLE001 — best-effort bridge; never crash the gateway
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass

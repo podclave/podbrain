@@ -9,7 +9,7 @@ a single spin-down Sprite, keyless (local embeddings + the Claude subscription).
 ## Architecture
 
 ```
-  teammates' Claude Code ──┐  skill + hooks (curl), bearer token
+  teammates' Claude Code ──┐  agentmemory MCP (interactive) + hooks (auto) + skill, bearer token
                            ▼
    https://<brain>.sprites.app   (public, one bearer secret)
                            │
@@ -39,14 +39,14 @@ server/
   install-brain.sh         one-shot, idempotent server provisioner
   gateway/app.py           the FastAPI gateway
   gateway/requirements.txt pinned deps
-client/                    shipped as a Podclave config bundle (4 overlays)
+client/                    shipped as a Podclave config bundle (5 overlays)
   README.md                    the overlay manifest (path -> contents)
-  skills/team-brain/SKILL.md   skill manifest
-  skills/team-brain/brain.py   single-file Python client (stdlib only): recall/
-                               remember/file/health + hook-{recall,stop,
-                               sessionend,sessionstart} + distill
+  skills/team-brain/SKILL.md   skill manifest (routes memory to the MCP; file -> brain.py)
+  skills/team-brain/brain.py   single-file Python (stdlib): the deterministic hooks
+                               (auto-recall + passive distill) + file ingest
   env.podclave.brain.template  -> ~/.env.podclave.brain (URL + secret, auto-sourced)
-  managed-settings.d/20-team-brain.json  -> /etc/... (hooks, owner root, zero-merge)
+  managed-settings.d/20-team-brain.json  -> /etc/... (hooks + MCP-tool perms, owner root)
+  managed-mcp.json             -> /etc/claude-code/managed-mcp.json (the agentmemory MCP, owner root)
 ```
 
 See [client/README.md](client/README.md) for the overlay manifest and
@@ -70,7 +70,7 @@ curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory
 
 ## Onboard a teammate (client)
 
-Rollout is via a **Podclave config bundle** — 4 overlays, no installer. See
+Rollout is via a **Podclave config bundle** — 5 overlays, no installer. See
 [client/README.md](client/README.md) for the exact overlay manifest (path →
 contents) and [docs/ROLLOUT.md](docs/ROLLOUT.md) for the full rollout (server,
 schedule, verification).
@@ -84,10 +84,12 @@ After that, the teammate's Claude:
 - **auto-recalls** relevant team knowledge each turn (UserPromptSubmit hook),
 - **auto-captures** durable learnings after work (async Stop hook → local
   `claude -p` distiller → push; secrets scrubbed, only distilled facts leave the VM),
-- **recall / remember / file** on demand via the skill (`brain.py`).
+- **recalls / saves / curates** on demand via the **agentmemory MCP** (the native
+  `memory_*` toolset — search, save, governance-delete, consolidate, snapshot, audit),
+- **ingests documents** via `brain.py file <path>` (the one capability not in the MCP).
 
 "File this <document>" → the file is uploaded to `/ingest`, extracted
-server-side (pdf/docx/pptx/md), chunked, stored, and made searchable.
+server-side (pdf/docx/pptx/md), chunked, stored, and made searchable via the MCP.
 
 ## The cataloger
 

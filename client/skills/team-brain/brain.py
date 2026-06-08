@@ -6,10 +6,18 @@ guard, detached capture + Sprite keep-alive, single-flight flock, feedback-loop
 strip, prompt-hijack delimiting, same-session dedup, offset gating, since-marker
 sweep (with the sweep-guard derived from a shared constant so it can't go stale).
 
+ROLE: the INTERACTIVE memory surface is now the agentmemory MCP (recall/save/curate
+via mcp__agentmemory__memory_* tools). This script is the part the MCP can't do:
+the deterministic HOOKS (auto-recall + passive keyless distillation — shell hooks
+can't call MCP tools, so they use the REST recall/_save paths here) plus `file`
+document ingest (gateway-only endpoint, not in the engine MCP). The recall/remember
+CLI verbs remain as the hooks' internal plumbing.
+
 Subcommands:
-  recall <query> [k]        bulleted relevant memories (full content)
+  recall <query> [k]        bulleted candidate memories (titles, best-first)
   remember <text> [type]    save a memory (fact|decision|lesson)
   file <path> [note]        ingest a document (pdf/docx/pptx/md...)
+  viewer                    print the browser memory-viewer URL (embeds the key)
   health                    service check
   hook-recall               UserPromptSubmit: inject <team-brain-context>
   hook-stop                 Stop (async): debounce + passive capture
@@ -21,7 +29,7 @@ Config (BRAIN_URL, BRAIN_SECRET): env if set, else ~/.env.podclave.brain / ./bra
 Identity: ~/.podclave/user-email, falling back to git email / $USER.
 Deps: python3 only (stdlib). External processes: claude, sprite-env (both optional/guarded).
 """
-import os, sys, re, json, time, fcntl, shutil, subprocess, urllib.request
+import os, sys, re, json, time, fcntl, shutil, subprocess, urllib.request, urllib.parse
 
 HOME = os.path.expanduser("~")
 SELF = os.path.abspath(__file__)
@@ -90,28 +98,33 @@ def api(path, method="GET", data=None, timeout=25):
 
 
 # --- core verbs --------------------------------------------------------------
-def do_recall(q, k=5):
+# Auto-injected recall is a generous, cheap MENU — a wide top-k handed to the client
+# so the model (the smartest thing in the loop) decides what to use vs ignore. No
+# score threshold: raw hybrid scores aren't comparable across brains. smart-search
+# returns results best-first and each `title` IS the full text for atomic facts; the
+# model pulls full detail for anything longer (doc chunks) via the agentmemory MCP.
+# One round-trip, no per-item fetch.
+def do_recall(q, k=15):
     try:
         res = api("/agentmemory/smart-search", "POST", {"query": q})
     except Exception:
         return
-    ids = [r.get("obsId") for r in (res.get("results") or [])][:k]
-    for i in ids:
-        if not i:
-            continue
-        try:
-            m = api("/agentmemory/memories/%s" % i)
-        except Exception:
-            continue
-        mem = m.get("memory") or {}
-        c = m.get("content") or mem.get("content") or m.get("title") or mem.get("title")
-        if c:
-            print("• " + c)
+    for r in (res.get("results") or [])[:k]:
+        t = (r.get("title") or "").strip()
+        if t:
+            print("• " + t)
 
 
-def _save(text, typ="fact"):
-    body = "%s  —[saved by %s]" % (text, USER_ID)
-    return api("/agentmemory/remember", "POST", {"content": body, "type": typ})
+def _save(text, typ="fact", source="human"):
+    # Mark machine-distilled facts distinctly from human-vouched ones, so recall can
+    # weight them lower and curation can review/filter them. Carries BOTH a readable
+    # provenance tag and a structured source/tags (engine fields; harmless if ignored).
+    label = "auto-captured" if source == "auto" else "saved"
+    body = "%s  —[%s by %s]" % (text, label, USER_ID)
+    payload = {"content": body, "type": typ, "source": source}
+    if source == "auto":
+        payload["tags"] = ["auto-distill"]
+    return api("/agentmemory/remember", "POST", payload)
 
 
 def do_remember(text, typ="fact"):
@@ -141,12 +154,30 @@ def do_file(path, note=""):
         print(r.read().decode())
 
 
+def do_viewer():
+    # The browser dashboard is gateway-gated by an HttpOnly cookie set via
+    # /viewer?key=<secret>; the secret IS our bearer (BRAIN_SECRET == the gateway's
+    # secret == the cookie value), so we can compose the link locally — no round-trip.
+    # The user opens this in a browser; it 303-redirects to a clean /viewer with the
+    # cookie set. Key is exposed in the URL by design (admin/ops-grade access).
+    print("%s/viewer?key=%s" % (BRAIN_URL.rstrip("/"),
+                                urllib.parse.quote(BRAIN_SECRET, safe="")))
+
+
 # --- distillation ------------------------------------------------------------
+# Regex backstop behind the LLM "no secrets" instruction. Specific patterns first,
+# broad ones last. Defense-in-depth on a SHARED brain: one leaked credential is
+# everyone's problem.
 SCRUB = [
-    (re.compile(r'sk-(?:ant-)?[A-Za-z0-9_-]{12,}'), '[REDACTED]'),
+    (re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----', re.S), '[REDACTED-PRIVATE-KEY]'),
+    (re.compile(r'sk-(?:ant-)?[A-Za-z0-9_-]{12,}'), '[REDACTED]'),          # OpenAI / Anthropic
+    (re.compile(r'gh[posru]_[A-Za-z0-9]{20,}'), '[REDACTED]'),              # GitHub (ghp_/gho_/ghs_/ghr_/ghu_)
+    (re.compile(r'xox[baprs]-[A-Za-z0-9-]{10,}'), '[REDACTED]'),            # Slack
+    (re.compile(r'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'), '[REDACTED-JWT]'),  # JWT
+    (re.compile(r'\b([a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:)[^/\s:@]+(@)'), r'\1[REDACTED]\2'),  # scheme://user:PASS@host
+    (re.compile(r'AKIA[0-9A-Z]{16}'), '[REDACTED]'),                        # AWS access key id
     (re.compile(r'([A-Za-z0-9_-]*(?:SECRET|TOKEN|PASSWORD|API_KEY|APIKEY)[A-Za-z0-9_-]*[=:]\s*)[^\s"]+', re.I), r'\1[REDACTED]'),
-    (re.compile(r'\b[0-9a-f]{32,}\b'), '[REDACTED]'),
-    (re.compile(r'AKIA[0-9A-Z]{16}'), '[REDACTED]'),
+    (re.compile(r'\b[0-9a-f]{32,}\b'), '[REDACTED]'),                       # generic long hex
 ]
 def scrub(s):
     for rx, rep in SCRUB:
@@ -259,7 +290,7 @@ def do_distill(sid, transcript):
         if not content:
             continue
         try:
-            _save(content, it.get("type") or "fact"); count += 1
+            _save(content, it.get("type") or "fact", source="auto"); count += 1
         except Exception:
             pass
     open(offset_file, "w").write(str(total))
@@ -302,6 +333,18 @@ def guard():
     return bool(os.environ.get("BRAIN_DISTILLER"))
 
 
+# Prompts not worth a recall round-trip or injected-context tokens (greetings/acks/
+# bare continuations). Skipping these is the safe half of the recall-relevance fix.
+_TRIVIAL = {"thanks", "thank you", "ty", "ok", "okay", "k", "cool", "nice", "great",
+            "yes", "no", "yep", "nope", "sure", "got it", "gotcha", "done", "yw", "np",
+            "perfect", "awesome", "lgtm", "ship it", "continue", "go", "go on",
+            "keep going", "next", "hi", "hey", "hello"}
+
+def is_trivial(prompt):
+    s = prompt.strip().lower().rstrip("!.?")
+    return s in _TRIVIAL or len(s.split()) < 2
+
+
 def main():
     global BRAIN_URL, BRAIN_SECRET, USER_ID
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
@@ -315,6 +358,8 @@ def main():
         do_remember(a[0], a[1] if len(a) > 1 else "fact")
     elif cmd == "file":
         do_file(a[0], a[1] if len(a) > 1 else "")
+    elif cmd == "viewer":
+        do_viewer()
     elif cmd == "health":
         try:
             print(json.dumps(api("/agentmemory/health")))
@@ -326,7 +371,7 @@ def main():
         if guard():
             return
         prompt = stdin_json().get("prompt") or ""
-        if not prompt:
+        if not prompt or is_trivial(prompt):
             return
         try:
             ctx = subprocess.run([sys.executable, SELF, "recall", prompt],
@@ -334,8 +379,11 @@ def main():
         except Exception:
             ctx = ""
         if ctx.strip():
-            print("<team-brain-context>\n# Relevant shared knowledge from the team brain "
-                  "(recall before answering):\n%s\n</team-brain-context>" % ctx.rstrip())
+            print("<team-brain-context>\n# Possibly-relevant notes from the team brain — "
+                  "candidates, not gospel. Use any that apply, ignore the rest; for any "
+                  "item you want in full (e.g. a doc chunk), pull it via the agentmemory "
+                  "MCP (memory_recall / memory_smart_search).\n%s\n</team-brain-context>"
+                  % ctx.rstrip())
     elif cmd == "hook-stop":
         if guard():
             return
@@ -397,7 +445,7 @@ def main():
                     continue
                 kp_distill(sid, tr)
     else:
-        print("usage: brain.py {recall|remember|file|health|distill|hook-recall|"
+        print("usage: brain.py {recall|remember|file|viewer|health|distill|hook-recall|"
               "hook-stop|hook-sessionend|hook-sessionstart}", file=sys.stderr)
 
 

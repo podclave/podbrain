@@ -1,6 +1,22 @@
 {
-  "_comment": "Overlay drop to /etc/claude-code/managed-settings.d/20-team-brain.json (owner: root). Claude Code COMBINES hooks across all settings sources, so this adds the team-brain hooks org-wide WITHOUT touching any user's ~/.claude/settings.json. autoMemoryEnabled:false disables Claude's native file-based memory fleet-wide (users can't re-enable) so team-brain is THE memory system. All hooks are subcommands of the single brain.py; each guards against BRAIN_DISTILLER recursion.",
+  "_comment": "Overlay drop to /etc/claude-code/managed-settings.d/20-team-brain.json (owner: root). Claude Code COMBINES hooks across all settings sources, so this adds the team-brain hooks org-wide WITHOUT touching any user's ~/.claude/settings.json. autoMemoryEnabled:false disables Claude's native file-based memory fleet-wide (users can't re-enable) so team-brain is THE memory system. The hooks are subcommands of brain.py; each guards against BRAIN_DISTILLER recursion. The interactive memory surface is the agentmemory MCP (see managed-mcp.json); the permissions.allow list below auto-approves the SAFE memory tools (read + reversible curation) so they run without prompts, while leaving destructive ops (memory_governance_delete), local-file writers, and the agent-workflow tools to PROMPT (omitted = prompt; we intentionally do NOT use allowManagedPermissionRulesOnly, so users keep their own non-MCP allow rules).",
   "autoMemoryEnabled": false,
+  "permissions": {
+    "allow": [
+      "mcp__agentmemory__memory_smart_search", "mcp__agentmemory__memory_recall",
+      "mcp__agentmemory__memory_sessions", "mcp__agentmemory__memory_audit",
+      "mcp__agentmemory__memory_export", "mcp__agentmemory__memory_graph_query",
+      "mcp__agentmemory__memory_relations", "mcp__agentmemory__memory_timeline",
+      "mcp__agentmemory__memory_profile", "mcp__agentmemory__memory_patterns",
+      "mcp__agentmemory__memory_insight_list", "mcp__agentmemory__memory_file_history",
+      "mcp__agentmemory__memory_commits", "mcp__agentmemory__memory_commit_lookup",
+      "mcp__agentmemory__memory_verify", "mcp__agentmemory__memory_lesson_recall",
+      "mcp__agentmemory__memory_save", "mcp__agentmemory__memory_lesson_save",
+      "mcp__agentmemory__memory_consolidate", "mcp__agentmemory__memory_crystallize",
+      "mcp__agentmemory__memory_snapshot_create", "mcp__agentmemory__memory_reflect",
+      "mcp__agentmemory__memory_team_share"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "python3 ~/.claude/skills/team-brain/brain.py hook-recall" } ] }
