@@ -29,7 +29,8 @@ Config (BRAIN_URL, BRAIN_SECRET): env if set, else ~/.env.podclave.brain / ./bra
 Identity: ~/.podclave/user-email, falling back to git email / $USER.
 Deps: python3 only (stdlib). External processes: claude, sprite-env (both optional/guarded).
 """
-import os, sys, re, json, time, fcntl, shutil, subprocess, urllib.request, urllib.parse
+import os, sys, re, json, time, fcntl, shutil, socket, subprocess
+import urllib.request, urllib.parse, urllib.error
 
 HOME = os.path.expanduser("~")
 SELF = os.path.abspath(__file__)
@@ -97,6 +98,74 @@ def api(path, method="GET", data=None, timeout=25):
         return json.loads(r.read() or b"null")
 
 
+# --- brain health signal -----------------------------------------------------
+# The memory paths fail silently by design (a broken brain must never block a turn).
+# The cost: a down/misconfigured brain looks identical to "nothing to recall" — and
+# worse, the agentmemory MCP shim, on a failed proxy call, silently saves to a
+# THROWAWAY LOCAL store and reports success, so the user believes a memory reached the
+# team brain when it didn't (and one failure pins the whole session to local). We can't
+# change the shim, but the recall hook already hits the same gateway every turn, so we
+# use that call as a free liveness probe and surface a terminal warning when the brain
+# is unreachable. State lives under STATE: `last-ok` (success heartbeat) and
+# `health-down` ("<code>\t<human>\t<ts>" from the last failed contact).
+HEALTH_OK = os.path.join(STATE, "last-ok")
+HEALTH_DOWN = os.path.join(STATE, "health-down")
+# A lone timeout can just be a spin-down box waking — only treat timeouts as "down"
+# when we haven't succeeded within this window, so a cold start doesn't cry wolf.
+_HEALTH_TIMEOUT_GRACE = 3600
+
+
+def _classify(e):
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code in (401, 403):
+            return "auth", "the brain rejected our credentials (HTTP %d) — the secret may have been rotated" % e.code
+        return "server", "the brain returned HTTP %d" % e.code
+    if isinstance(e, ValueError):  # JSONDecodeError — reached something that isn't the brain
+        return "unreachable", "the brain returned an unexpected (non-JSON) response — is BRAIN_URL correct?"
+    reason = getattr(e, "reason", e)
+    if isinstance(e, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+        return "timeout", "the brain did not respond in time"
+    return "unreachable", "the brain is unreachable (%s)" % (str(reason) or e.__class__.__name__)
+
+
+def _mark_ok():
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        with open(HEALTH_OK, "w") as f:
+            f.write(str(time.time()))
+        if os.path.exists(HEALTH_DOWN):
+            os.remove(HEALTH_DOWN)
+    except Exception:
+        pass
+
+
+def _mark_down(e):
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        code, human = _classify(e)
+        with open(HEALTH_DOWN, "w") as f:
+            f.write("%s\t%s\t%s" % (code, human, time.time()))
+    except Exception:
+        pass
+
+
+def health_warning():
+    """Human reason if the brain is currently down and worth surfacing, else ''.
+    Reads the state the recall hook just wrote; lenient on a lone timeout so a waking
+    spin-down box doesn't false-alarm."""
+    try:
+        code, human, _ = open(HEALTH_DOWN).read().split("\t", 2)
+    except Exception:
+        return ""
+    if code == "timeout":
+        try:
+            if time.time() - float(open(HEALTH_OK).read().strip()) < _HEALTH_TIMEOUT_GRACE:
+                return ""
+        except Exception:
+            pass
+    return human
+
+
 # --- core verbs --------------------------------------------------------------
 # Auto-injected recall is a generous, cheap MENU — a wide top-k handed to the client
 # so the model (the smartest thing in the loop) decides what to use vs ignore. No
@@ -105,10 +174,14 @@ def api(path, method="GET", data=None, timeout=25):
 # model pulls full detail for anything longer (doc chunks) via the agentmemory MCP.
 # One round-trip, no per-item fetch.
 def do_recall(q, k=15):
+    # The smart-search call doubles as the liveness probe (timeout < the hook's 12s
+    # kill, so we classify the failure before the parent gives up).
     try:
-        res = api("/agentmemory/smart-search", "POST", {"query": q})
-    except Exception:
+        res = api("/agentmemory/smart-search", "POST", {"query": q}, timeout=10)
+    except Exception as e:
+        _mark_down(e)
         return
+    _mark_ok()
     for r in (res.get("results") or [])[:k]:
         t = (r.get("title") or "").strip()
         if t:
@@ -378,12 +451,28 @@ def main():
                                  capture_output=True, text=True, timeout=12).stdout
         except Exception:
             ctx = ""
+        out = []
+        # The recall subprocess just probed the gateway; surface a terminal warning if
+        # it's down — the user MUST know that saves aren't reaching the shared brain.
+        warn = health_warning()
+        if warn:
+            out.append(
+                "<team-brain-status>\n⚠ TEAM BRAIN UNAVAILABLE — %s. While this lasts, "
+                "auto-recall is empty AND new memories are NOT reaching the shared brain: "
+                "the agentmemory MCP silently falls back to a throwaway local store and "
+                "reports success, so do not treat anything \"saved\" this session as "
+                "persisted. Tell the user plainly; details via "
+                "`python3 ~/.claude/skills/team-brain/brain.py health`.\n</team-brain-status>"
+                % warn)
         if ctx.strip():
-            print("<team-brain-context>\n# Possibly-relevant notes from the team brain — "
-                  "candidates, not gospel. Use any that apply, ignore the rest; for any "
-                  "item you want in full (e.g. a doc chunk), pull it via the agentmemory "
-                  "MCP (memory_recall / memory_smart_search).\n%s\n</team-brain-context>"
-                  % ctx.rstrip())
+            out.append(
+                "<team-brain-context>\n# Possibly-relevant notes from the team brain — "
+                "candidates, not gospel. Use any that apply, ignore the rest; for any "
+                "item you want in full (e.g. a doc chunk), pull it via the agentmemory "
+                "MCP (memory_recall / memory_smart_search).\n%s\n</team-brain-context>"
+                % ctx.rstrip())
+        if out:
+            print("\n".join(out))
     elif cmd == "hook-stop":
         if guard():
             return

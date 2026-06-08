@@ -25,3 +25,4 @@ pointed at the team's central server.
 - The brain supersedes near-duplicate saves automatically (keeping the newer phrasing), so prefer a clear, specific re-statement over worrying about exact-match dupes; reach for `memory_governance_delete` only for genuinely redundant records.
 - Relevant knowledge is also auto-injected each turn inside `<team-brain-context>` (the recall hook); use `memory_smart_search` explicitly for deeper or query-specific lookups.
 - Destructive curation (`memory_governance_delete`) acts on **shared, team-wide** memory and will prompt — confirm scope with the user before bulk deletes.
+- If a `<team-brain-status>` warning appears, the brain is **unreachable**: recall is empty and — critically — anything "saved" is silently going to a throwaway local store, not the team brain. Tell the user plainly so they don't assume their memories persisted (you needn't repeat it every message once they know).
