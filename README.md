@@ -182,3 +182,8 @@ client/
 docs/
   DEVELOPING.md            working ON podbrain: design decisions, gotchas, tradeoffs
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE). The agentmemory engine and MCP shim it builds on are
+Apache-2.0 (© their authors).

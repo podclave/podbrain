@@ -389,7 +389,8 @@ def sprite_task(*args):
 
 
 def kp_distill(sid, tr):
-    # Fixed-name keep-alive: each POST upserts/extends the 1m TTL (self-cleans). No-op off-Sprite.
+    # Hold a short-TTL Sprite keep-alive task so the box can't suspend mid-capture;
+    # re-posting extends it and it self-expires. No-op off-Sprite.
     sprite_task("-X", "POST", "/v1/tasks", "-d", '{"name":"brain-capture","expire":"1m"}')
     do_distill(sid, tr)
 

@@ -23,7 +23,7 @@ Status: working, proven end-to-end on a real client→server deployment.
 ## Lessons baked into the code (the expensive-to-rediscover stuff)
 
 - **Hooks COMBINE across all settings sources** in Claude Code → drop hooks via managed `/etc/claude-code/managed-settings.d/` and never merge a user's `settings.json`. `autoMemoryEnabled:false` MUST be in *managed* scope to be non-overridable.
-- **SessionEnd hooks get cancelled on shutdown** if slow → all distillation runs DETACHED (`setsid`) and holds a Sprite keep-alive task so it survives `/exit` and auto-suspend. Keep-alive: `sprite-env curl /v1/tasks` (fixed name `brain-capture`, 1m-TTL upsert; no-op off-Sprite).
+- **SessionEnd hooks get cancelled on shutdown** if slow → all distillation runs DETACHED (`setsid`) and holds a short-TTL Sprite keep-alive task (via `sprite-env`) so it survives `/exit` and auto-suspend; the task self-expires, and it's a no-op off-Sprite.
 - **`claude -p` writes its own transcript** → the SessionStart sweep must skip transcripts containing the distiller prompt, or it re-ingests its own output. The skip-guard is derived from a shared `DISTILLER_MARKER` constant embedded in the prompt, so the two can't drift.
 - **Recursion guard**: distillation runs `claude -p` with `BRAIN_DISTILLER=1`; every hook checks it and exits (env inherits into child-session hooks).
 - **Prompt hijack**: a transcript that looks like a question makes a weak model *answer it* instead of extracting → hard-delimit with `===TRANSCRIPT===` + an anti-hijack directive.
@@ -53,4 +53,4 @@ Status: working, proven end-to-end on a real client→server deployment.
 
 - **Identity**: Podclave writes `~/.podclave/user-email` on Setup (drives attribution; overlays are otherwise byte-identical org-wide).
 - **Delivery**: the managed overlays (`owner: root`) and the cataloger Schedule are configured in Podclave, not by the installer.
-- **Known bug**: new sprites have `$HOME` owned by `ubuntu`, not `sprite` (a Podclave initializer issue) → pip cache-permission noise; the installer uses `--no-cache-dir` to stay quiet.
+- **Environment quirk**: on a fresh sprite `$HOME` may be owned by a different user than the one the install runs as → pip cache-permission noise; the installer uses `--no-cache-dir` to stay quiet.
