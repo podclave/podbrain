@@ -53,7 +53,8 @@ log "configured $ENV_FILE (TEAM_ID=$TEAM_ID, keyless local embeddings)"
 
 # --- 3. gateway (copy from repo) + venv -------------------------------------
 mkdir -p "$GW_DIR" "$DOCS_DIR"
-cp "$HERE/gateway/app.py" "$HERE/gateway/requirements.txt" "$GW_DIR/"
+cp "$HERE/gateway/app.py" "$HERE/gateway/requirements.txt" "$HERE/gateway/recover-engine.sh" "$GW_DIR/"
+chmod +x "$GW_DIR/recover-engine.sh"
 [ -d "$GW_DIR/.venv" ] || { log "creating gateway venv"; python3 -m venv "$GW_DIR/.venv"; }
 log "installing gateway deps"
 "$GW_DIR/.venv/bin/pip" install -q --no-cache-dir --upgrade pip >/dev/null
@@ -100,8 +101,10 @@ cat <<EOF
    2. Render the client overlays:  bash client/overlay_instructions.sh
       (#3 .env.podclave.brain is pre-filled with the values above), then
       paste each block into the Podclave team-brain bundle.
-   3. Set the cataloger Schedule to POST ${URL:-<url>}/maintenance/run
-      with header 'Authorization: Bearer $SECRET'.   Full guide: ./README.md
+   3. Add two Podclave Schedules (header 'Authorization: Bearer $SECRET'):
+        - cataloger:  POST ${URL:-<url>}/maintenance/run          (e.g. hourly)
+        - watchdog:   POST ${URL:-<url>}/maintenance/healthcheck  (e.g. every 10m)
+      Full guide: ./README.md
   Verify:  curl -H "Authorization: Bearer $SECRET" ${URL:-<url>}/agentmemory/health
 =========================================================================
 EOF

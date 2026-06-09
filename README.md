@@ -134,6 +134,26 @@ it). The scheduled POST also wakes a suspended box, so the full spin-down → wa
 catalog → keep-alive → re-suspend loop closes on its own; the cataloger no-ops
 cheaply when there's nothing new. Check state: `GET /maintenance/status`.
 
+### Engine watchdog (recommended)
+
+The agentmemory engine can occasionally **wedge** — alive but unresponsive (e.g. its
+internal WS to the iii backend severed by a spin-down suspend/resume) — after which the
+gateway just times out on every call. Add a second Schedule so a wedged engine
+self-heals:
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| Path | `/maintenance/healthcheck` |
+| Interval | e.g. `600` (10 min) |
+| Headers | `Authorization: Bearer <secret>` |
+
+The endpoint deep-probes the engine (`:3111/agentmemory/health`, 5s); if it's wedged it
+fires `recover-engine.sh` **detached**, which cycles the engine (stop gateway → restart
+engine → start gateway, to get past the `needs` dependency) and is a no-op when healthy.
+Recovery is logged to `~/.agentmemory/recover.log`, single-flighted via `flock`, and
+preserves all stored memories (the restart is a process cycle, not a wipe).
+
 ## 4. Verify a teammate VM
 
 After overlay Setup on a teammate's VM:

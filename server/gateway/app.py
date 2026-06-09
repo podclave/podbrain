@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 
@@ -332,6 +333,36 @@ async def maintenance_status(authorization: str | None = Header(default=None)):
     return {"writes_since_run": MAINT["writes"], "running": MAINT["running"],
             "last_run": MAINT["last_run"], "trigger_at_writes": MAINT_WRITES,
             "min_interval_secs": MAINT_MIN_SECS, "last_result": MAINT["last_result"]}
+
+
+# Engine watchdog. The agentmemory engine can wedge — alive but unresponsive (e.g. its
+# internal WS to the iii backend severed by a spin-down suspend/resume) — and then every
+# proxied call just ReadTimeouts. A Podclave Schedule POSTs here on a cadence; we deep-
+# probe the engine and, if it's wedged, fire the detached recover-engine.sh. It MUST be
+# detached (`start_new_session`): recovery has to stop+restart THIS gateway to get past
+# the team-brain `needs agentmemory` dependency, so it can't run inside a request.
+RECOVER_SCRIPT = Path(__file__).resolve().parent / "recover-engine.sh"
+
+
+@app.post("/maintenance/healthcheck")
+async def maintenance_healthcheck(authorization: str | None = Header(default=None)):
+    require_auth(authorization)
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(f"{AM_BASE}/agentmemory/health",
+                            headers={"Authorization": f"Bearer {SECRET}"})
+        if r.status_code == 200:
+            return {"status": "healthy"}
+    except Exception:  # noqa: BLE001 — timeout / connect error == wedged engine
+        pass
+    action = "recovery-triggered"
+    try:
+        subprocess.Popen(["bash", str(RECOVER_SCRIPT)], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception as e:  # noqa: BLE001
+        action = f"recovery-spawn-failed: {e}"
+    return JSONResponse({"status": "unhealthy", "action": action}, status_code=503)
 
 
 # ---------- remember passthrough (write-count for the cataloger) ----------
