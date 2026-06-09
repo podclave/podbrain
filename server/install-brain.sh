@@ -71,10 +71,15 @@ fi
 if svc_exists team-brain; then log "restart team-brain"; sprite-env services restart team-brain >/dev/null
 else
   log "create service: team-brain gateway (public :8080)"
+  # NOTE: deliberately NOT `--needs agentmemory`. If the gateway depended on the engine,
+  # sprite-env would refuse to restart the engine while the gateway runs — so the engine
+  # watchdog (recover-engine.sh) couldn't cycle a wedged engine without also bouncing the
+  # gateway. Decoupled, the engine restarts on its own; the gateway tolerates a briefly-
+  # absent engine (it just returns errors until it's back).
   sprite-env services create team-brain --cmd "$GW_DIR/.venv/bin/python" \
     --args "-m,uvicorn,app:app,--host,0.0.0.0,--port,8080" \
     --env "HOME=$HOME,AGENTMEMORY_SECRET=$SECRET" \
-    --dir "$GW_DIR" --needs agentmemory --http-port 8080 --no-stream >/dev/null
+    --dir "$GW_DIR" --http-port 8080 --no-stream >/dev/null
 fi
 
 # --- 5. wait for health + report --------------------------------------------

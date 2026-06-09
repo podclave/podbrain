@@ -338,9 +338,9 @@ async def maintenance_status(authorization: str | None = Header(default=None)):
 # Engine watchdog. The agentmemory engine can wedge — alive but unresponsive (e.g. its
 # internal WS to the iii backend severed by a spin-down suspend/resume) — and then every
 # proxied call just ReadTimeouts. A Podclave Schedule POSTs here on a cadence; we deep-
-# probe the engine and, if it's wedged, fire the detached recover-engine.sh. It MUST be
-# detached (`start_new_session`): recovery has to stop+restart THIS gateway to get past
-# the team-brain `needs agentmemory` dependency, so it can't run inside a request.
+# probe the engine and, if it's wedged, fire recover-engine.sh, which restarts just the
+# engine (team-brain is intentionally NOT `needs`-bound to it, so the engine cycles on
+# its own and this gateway keeps serving). Spawned detached only so we return promptly.
 RECOVER_SCRIPT = Path(__file__).resolve().parent / "recover-engine.sh"
 
 

@@ -149,10 +149,11 @@ self-heals:
 | Headers | `Authorization: Bearer <secret>` |
 
 The endpoint deep-probes the engine (`:3111/agentmemory/health`, 5s); if it's wedged it
-fires `recover-engine.sh` **detached**, which cycles the engine (stop gateway → restart
-engine → start gateway, to get past the `needs` dependency) and is a no-op when healthy.
-Recovery is logged to `~/.agentmemory/recover.log`, single-flighted via `flock`, and
-preserves all stored memories (the restart is a process cycle, not a wipe).
+fires `recover-engine.sh`, which **restarts the engine** and is a no-op when healthy. The
+gateway is intentionally **not** `needs`-bound to the engine, so the engine cycles on its
+own while the gateway keeps serving (briefly erroring until it's back). Recovery is logged
+to `~/.agentmemory/recover.log`, single-flighted via `flock`, and preserves all stored
+memories (the restart is a process cycle, not a wipe).
 
 ## 4. Verify a teammate VM
 

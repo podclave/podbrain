@@ -3,14 +3,13 @@
 #
 # The engine can wedge: alive but unresponsive (e.g. its internal WS to the iii backend
 # severed by a spin-down suspend/resume), after which every gateway call ReadTimeouts.
-# This probes the engine and, only if it's wedged, cycles it — working around the
-# team-brain `needs agentmemory` dependency (sprite-env won't stop a service a running
-# service needs) by stopping the gateway, restarting the engine, then bringing the
-# gateway back. Idempotent and safe on a cadence: a no-op when the engine is healthy.
+# This probes the engine and, only if it's wedged, restarts it. The gateway (team-brain)
+# is deliberately NOT `needs`-bound to the engine, so the engine cycles on its own and
+# the gateway keeps serving throughout (briefly erroring until the engine is back).
+# Idempotent and safe on a cadence: a no-op when the engine is healthy.
 #
-# Used two ways: the gateway spawns it DETACHED from POST /maintenance/healthcheck, or
-# run it directly (cron / a command-capable scheduler) — the direct path is more robust
-# since it doesn't depend on the gateway being up.
+# Used two ways: the gateway spawns it from POST /maintenance/healthcheck, or run it
+# directly (cron / command scheduler) — the direct path doesn't even need the gateway up.
 set -u
 LOG="${BRAIN_RECOVER_LOG:-$HOME/.agentmemory/recover.log}"
 SEC_FILE="$HOME/.agentmemory/team_secret.txt"
@@ -27,14 +26,11 @@ exec 9>"/tmp/brain-recover.lock"
 flock -n 9 || { say "already recovering, skip"; exit 0; }
 engine_ok && { say "recovered before lock; skip"; exit 0; }   # re-check under lock
 
-sleep 2   # let the triggering HTTP response flush before the gateway goes down
-say "engine wedged — cycling (stop gateway → restart engine → start gateway)"
-sprite-env services stop team-brain     >>"$LOG" 2>&1 || say "WARN: stop team-brain failed"
+say "engine wedged — restarting agentmemory"
 sprite-env services restart agentmemory >>"$LOG" 2>&1 || say "WARN: restart agentmemory failed"
 for i in $(seq 1 30); do
   engine_ok && { say "engine healthy after ~$((i * 2))s"; break; }
   sleep 2
 done
-engine_ok || say "WARN: engine still not answering after wait; starting gateway anyway"
-sprite-env services start team-brain    >>"$LOG" 2>&1 || say "WARN: start team-brain failed"
+engine_ok || say "WARN: engine still not answering after restart+wait"
 say "done"
