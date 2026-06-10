@@ -56,7 +56,15 @@ INSTRUCTION = (
 
 
 # --- config + identity -------------------------------------------------------
-def load_config():
+def load_config(required=True):
+    # Plugin installs export userConfig as CLAUDE_PLUGIN_OPTION_* (per-project
+    # pluginConfigs overrides flow through these too); map them in first so one
+    # chain serves plugin, fleet-overlay, and bare-env installs. Explicit
+    # BRAIN_URL/BRAIN_SECRET env still wins.
+    for src, dst in (("CLAUDE_PLUGIN_OPTION_BRAIN_URL", "BRAIN_URL"),
+                     ("CLAUDE_PLUGIN_OPTION_BRAIN_SECRET", "BRAIN_SECRET")):
+        if os.environ.get(src) and not os.environ.get(dst):
+            os.environ[dst] = os.environ[src]
     if not (os.environ.get("BRAIN_URL") and os.environ.get("BRAIN_SECRET")):
         for f in (os.path.join(HOME, ".env.podclave.brain"),
                   os.path.join(os.path.dirname(SELF), "brain.env")):
@@ -66,13 +74,14 @@ def load_config():
                     if m:
                         os.environ.setdefault(m.group(1), m.group(2).strip().strip('"').strip("'"))
     url, sec = os.environ.get("BRAIN_URL"), os.environ.get("BRAIN_SECRET")
-    if not url or not sec:
-        sys.exit("set BRAIN_URL and BRAIN_SECRET (env or ~/.env.podclave.brain)")
+    if (not url or not sec) and required:
+        sys.exit("set BRAIN_URL and BRAIN_SECRET (env, plugin config, or ~/.env.podclave.brain)")
     return url, sec
 
 
 def identity():
-    u = os.environ.get("BRAIN_USER")
+    # Explicit env beats plugin config beats platform identity beats git/$USER.
+    u = os.environ.get("BRAIN_USER") or os.environ.get("CLAUDE_PLUGIN_OPTION_USER_EMAIL")
     if not u:
         p = os.path.join(HOME, ".podclave", "user-email")
         if os.path.isfile(p):
