@@ -33,7 +33,63 @@ SERVER_INFO = {"name": "team-brain", "version": "1.0.0"}
 # Curated surface: the tools SKILL.md teaches, nothing exotic (no leases/mesh/
 # sentinels against a shared brain). Descriptions and schemas mirror the shim so
 # model-facing behavior matches the fleet bundle. Filled in by Task 2.
-TOOLS: list[dict] = []
+def _t(name, description, properties, required=None):
+    schema = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return {"name": name, "description": description, "inputSchema": schema}
+
+
+_STR = lambda d: {"type": "string", "description": d}   # noqa: E731
+_NUM = lambda d: {"type": "number", "description": d}   # noqa: E731
+
+TOOLS = [
+    _t("memory_save",
+       "Explicitly save an important insight, decision, or pattern to long-term memory.",
+       {"content": _STR("The insight or decision to remember"),
+        "type": _STR("Memory type: pattern, preference, architecture, bug, workflow, or fact"),
+        "concepts": _STR("Comma-separated key concepts"),
+        "files": _STR("Comma-separated relevant file paths")},
+       required=["content"]),
+    _t("memory_recall",
+       "Search past session observations for relevant context. Use when you need to "
+       "recall what happened in previous sessions, find past decisions, or look up "
+       "how a file was modified before.",
+       {"query": _STR("Search query (keywords, file names, concepts)"),
+        "limit": _NUM("Max results to return (default 10)"),
+        "format": _STR("Result format: full, compact, or narrative (default full)"),
+        "token_budget": _NUM("Optional token budget to trim returned results")},
+       required=["query"]),
+    _t("memory_smart_search",
+       "Hybrid semantic+keyword search with progressive disclosure.",
+       {"query": _STR("Search query"),
+        "expandIds": _STR("Comma-separated observation IDs to expand"),
+        "limit": _NUM("Max results (default 10)")},
+       required=["query"]),
+    _t("memory_sessions",
+       "List recent sessions with their status and observation counts.",
+       {"limit": _NUM("Max sessions (default 20)")}),
+    _t("memory_export", "Export all memory data as JSON.", {}),
+    _t("memory_audit",
+       "View the audit trail of memory operations.",
+       {"operation": _STR("Filter by operation type"),
+        "limit": _NUM("Max entries (default 50)")}),
+    _t("memory_governance_delete",
+       "Delete specific memories with audit trail.",
+       {"memoryIds": _STR("Comma-separated memory IDs to delete"),
+        "reason": _STR("Reason for deletion")},
+       required=["memoryIds"]),
+    _t("memory_consolidate",
+       "Run the 4-tier memory consolidation pipeline (working -> episodic -> "
+       "semantic -> procedural).",
+       {"tier": _STR("Target tier: episodic, semantic, or procedural")}),
+    _t("memory_snapshot_create",
+       "Create a git-versioned snapshot of current memory state.",
+       {"message": _STR("Snapshot description")}),
+]
+# These have no dedicated REST endpoint — they ride the engine's generic
+# /agentmemory/mcp/call, like the shim's non-core tools do.
+GENERIC_TOOLS = {"memory_consolidate", "memory_snapshot_create"}
 
 
 class ToolError(Exception):
@@ -53,8 +109,67 @@ async def engine_call(am_base: str, secret: str, method: str, path: str,
         return {"status": r.status_code, "body": r.text[:2000]}
 
 
+def _norm_list(v):
+    """Comma-string or array -> trimmed list (mirrors the shim's normalizeList)."""
+    if isinstance(v, list):
+        return [s.strip() for s in v if isinstance(s, str) and s.strip()]
+    if isinstance(v, str):
+        return [s.strip() for s in v.split(",") if s.strip()]
+    return []
+
+
+def _limit(v, fallback=10):
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return fallback
+    return min(n, 100) if n > 0 else fallback
+
+
 async def call_tool(name: str, args: dict, am_base: str, secret: str, note_writes):
-    raise ToolError(f"unknown tool: {name}")  # replaced in Task 2
+    if name == "memory_save":
+        content = (args.get("content") or "").strip()
+        if not content:
+            raise ToolError("content is required")
+        out = await engine_call(am_base, secret, "POST", "/agentmemory/remember", {
+            "content": content, "type": args.get("type") or "fact",
+            "concepts": _norm_list(args.get("concepts")),
+            "files": _norm_list(args.get("files"))})
+        note_writes(1)  # feeds the activity-triggered cataloger, like /agentmemory/remember
+        return out
+    if name in ("memory_recall", "memory_smart_search"):
+        query = (args.get("query") or "").strip()
+        if not query:
+            raise ToolError("query is required")
+        payload = {"query": query, "limit": _limit(args.get("limit"))}
+        if name == "memory_recall":
+            payload["format"] = args.get("format") or "full"
+            path = "/agentmemory/search"
+        else:
+            if args.get("format"):
+                payload["format"] = args["format"]
+            path = "/agentmemory/smart-search"
+        if args.get("token_budget"):
+            payload["token_budget"] = args["token_budget"]
+        return await engine_call(am_base, secret, "POST", path, payload)
+    if name == "memory_sessions":
+        return await engine_call(am_base, secret, "GET",
+                                 f"/agentmemory/sessions?limit={_limit(args.get('limit'), 20)}")
+    if name == "memory_export":
+        return await engine_call(am_base, secret, "GET", "/agentmemory/export")
+    if name == "memory_audit":
+        return await engine_call(am_base, secret, "GET",
+                                 f"/agentmemory/audit?limit={_limit(args.get('limit'), 50)}")
+    if name == "memory_governance_delete":
+        ids = _norm_list(args.get("memoryIds"))
+        if not ids:
+            raise ToolError("memoryIds is required")
+        return await engine_call(am_base, secret, "DELETE",
+                                 "/agentmemory/governance/memories",
+                                 {"memoryIds": ids, "reason": args.get("reason") or "client request"})
+    # GENERIC_TOOLS: the engine's own MCP dispatcher handles them.
+    return await engine_call(am_base, secret, "POST", "/agentmemory/mcp/call",
+                             {"name": name, "arguments": args})
 
 
 def _tool_result(payload) -> dict:
