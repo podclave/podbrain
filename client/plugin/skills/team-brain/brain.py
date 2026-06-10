@@ -90,7 +90,7 @@ def identity():
     if not u:
         try:
             u = subprocess.run(["git", "config", "user.email"], capture_output=True,
-                               text=True).stdout.strip()
+                               text=True, timeout=5).stdout.strip()
         except Exception:
             u = ""
     return u or os.environ.get("USER", "unknown")
@@ -435,23 +435,27 @@ def main():
     a = sys.argv[2:]
     # Hooks must never noise up or block a turn on an unconfigured install
     # (plugin installed, userConfig not yet set): they exit 0 quietly, except
-    # SessionStart, which surfaces it ONCE — stderr for the human, additional-
-    # Context for the model. CLI verbs stay strict (clear error + exit 1).
+    # SessionStart, which surfaces it ONCE — systemMessage for the human,
+    # additionalContext for the model (stderr only reaches the debug log).
+    # CLI verbs stay strict (clear error + exit 1).
     hook_cmd = cmd.startswith("hook-") or cmd.startswith("_bg")
     BRAIN_URL, BRAIN_SECRET = load_config(required=not hook_cmd)
-    USER_ID = identity()
     if hook_cmd and not (BRAIN_URL and BRAIN_SECRET):
         if cmd == "hook-sessionstart" and not guard():
             print("[team-brain] installed but not configured — memory features "
                   "inactive (run /team-brain:setup)", file=sys.stderr)
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext":
-                    "The team-brain plugin is installed but NOT configured "
-                    "(brain_url/brain_secret unset), so shared-memory recall/"
-                    "capture is inactive this session. If the user asks about "
-                    "memory, tell them and point them at /team-brain:setup."}}))
+            print(json.dumps({
+                "systemMessage": "[team-brain] installed but not configured — "
+                                 "memory features inactive (run /team-brain:setup)",
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext":
+                        "The team-brain plugin is installed but NOT configured "
+                        "(brain_url/brain_secret unset), so shared-memory recall/"
+                        "capture is inactive this session. If the user asks about "
+                        "memory, tell them and point them at /team-brain:setup."}}))
         return
+    USER_ID = identity()
 
     if cmd == "recall":
         do_recall(a[0], int(a[1]) if len(a) > 1 else 5)
@@ -527,7 +531,7 @@ def main():
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext":
-                "team-brain: this project is connected to %s (memories saved/"
+                "team-brain: this session is connected to %s (memories saved/"
                 "captured there are attributed to %s)." % (BRAIN_URL, USER_ID)}}))
         if not os.environ.get("BRAIN_NO_DISTILL"):
             detach("_bgsweep", stdin_json().get("session_id") or "none")
