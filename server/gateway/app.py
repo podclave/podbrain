@@ -9,6 +9,9 @@ Routes (all bearer-gated except /healthz):
                         login via /viewer?key=<secret> (sets an HttpOnly cookie)
   /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111); accepts
                         bearer OR the viewer cookie (gateway injects the engine bearer)
+  /mcp                  POST: stateless MCP (Streamable HTTP) — the keyless client
+                        surface; curated memory tools fulfilled via the engine REST
+                        API (see mcp_endpoint.py)
   /stream/*  (WS)       proxy the viewer's live-feed WebSocket to the streams worker
                         (:3112); cookie-authed (browsers can't header-auth a WS)
 
