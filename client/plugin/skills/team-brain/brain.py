@@ -7,7 +7,7 @@ strip, prompt-hijack delimiting, same-session dedup, offset gating, since-marker
 sweep (with the sweep-guard derived from a shared constant so it can't go stale).
 
 ROLE: the INTERACTIVE memory surface is now the agentmemory MCP (recall/save/curate
-via mcp__agentmemory__memory_* tools). This script is the part the MCP can't do:
+via the agentmemory MCP memory_* tools). This script is the part the MCP can't do:
 the deterministic HOOKS (auto-recall + passive keyless distillation — shell hooks
 can't call MCP tools, so they use the REST recall/_save paths here) plus `file`
 document ingest (gateway-only endpoint, not in the engine MCP). The recall/remember
