@@ -25,8 +25,9 @@ Subcommands:
   hook-sessionstart         SessionStart: catch-up sweep
   distill <sid> <path>      distill durable learnings from a transcript slice
 
-Config (BRAIN_URL, BRAIN_SECRET): env if set, else ~/.env.podclave.brain / ./brain.env.
-Identity: ~/.podclave/user-email, falling back to git email / $USER.
+Config (BRAIN_URL, BRAIN_SECRET): env if set, else plugin config (CLAUDE_PLUGIN_OPTION_*),
+else ~/.env.podclave.brain / ./brain.env.
+Identity: BRAIN_USER / plugin USER_EMAIL, else ~/.podclave/user-email, else git email / $USER.
 Deps: python3 only (stdlib). External processes: claude, sprite-env (both optional/guarded).
 """
 import os, sys, re, json, time, fcntl, shutil, socket, subprocess
@@ -432,8 +433,25 @@ def main():
     global BRAIN_URL, BRAIN_SECRET, USER_ID
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     a = sys.argv[2:]
-    BRAIN_URL, BRAIN_SECRET = load_config()
+    # Hooks must never noise up or block a turn on an unconfigured install
+    # (plugin installed, userConfig not yet set): they exit 0 quietly, except
+    # SessionStart, which surfaces it ONCE — stderr for the human, additional-
+    # Context for the model. CLI verbs stay strict (clear error + exit 1).
+    hook_cmd = cmd.startswith("hook-") or cmd.startswith("_bg")
+    BRAIN_URL, BRAIN_SECRET = load_config(required=not hook_cmd)
     USER_ID = identity()
+    if hook_cmd and not (BRAIN_URL and BRAIN_SECRET):
+        if cmd == "hook-sessionstart" and not guard():
+            print("[team-brain] installed but not configured — memory features "
+                  "inactive (run /team-brain:setup)", file=sys.stderr)
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext":
+                    "The team-brain plugin is installed but NOT configured "
+                    "(brain_url/brain_secret unset), so shared-memory recall/"
+                    "capture is inactive this session. If the user asks about "
+                    "memory, tell them and point them at /team-brain:setup."}}))
+        return
 
     if cmd == "recall":
         do_recall(a[0], int(a[1]) if len(a) > 1 else 5)
@@ -468,12 +486,12 @@ def main():
         if warn:
             out.append(
                 "<team-brain-status>\n⚠ TEAM BRAIN UNAVAILABLE — %s. While this lasts, "
-                "auto-recall is empty AND new memories are NOT reaching the shared brain: "
-                "the agentmemory MCP silently falls back to a throwaway local store and "
-                "reports success, so do not treat anything \"saved\" this session as "
-                "persisted. Tell the user plainly; details via "
-                "`python3 ~/.claude/skills/team-brain/brain.py health`.\n</team-brain-status>"
-                % warn)
+                "auto-recall is empty AND new memories are NOT reaching the shared "
+                "brain (memory tool calls will error; on fleet installs using the "
+                "stdio shim they may even falsely report success). Do not treat "
+                "anything \"saved\" this session as persisted; tell the user "
+                "plainly. Details: `python3 %s health`.\n</team-brain-status>"
+                % (warn, SELF))
         if ctx.strip():
             out.append(
                 "<team-brain-context>\n# Possibly-relevant notes from the team brain — "
@@ -484,7 +502,7 @@ def main():
         if out:
             print("\n".join(out))
     elif cmd == "hook-stop":
-        if guard():
+        if guard() or os.environ.get("BRAIN_NO_DISTILL"):
             return
         os.makedirs(STATE, exist_ok=True)
         d = stdin_json(); sid, tr = d.get("session_id"), d.get("transcript_path")
@@ -494,7 +512,7 @@ def main():
         open(os.path.join(STATE, "ping-" + sid), "w").write(ts)
         detach("_bgstop", sid, tr, ts)
     elif cmd == "hook-sessionend":
-        if guard():
+        if guard() or os.environ.get("BRAIN_NO_DISTILL"):
             return
         d = stdin_json(); sid, tr = d.get("session_id"), d.get("transcript_path")
         if not (sid and tr and os.path.isfile(tr)):
@@ -503,7 +521,16 @@ def main():
     elif cmd == "hook-sessionstart":
         if guard():
             return
-        detach("_bgsweep", stdin_json().get("session_id") or "none")
+        # Name the attached brain (compliance: multi-brain machines must be able
+        # to SEE which brain this project captures to — wrong-brain attachment
+        # should be noticeable, not silent).
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext":
+                "team-brain: this project is connected to %s (memories saved/"
+                "captured there are attributed to %s)." % (BRAIN_URL, USER_ID)}}))
+        if not os.environ.get("BRAIN_NO_DISTILL"):
+            detach("_bgsweep", stdin_json().get("session_id") or "none")
     elif cmd == "_bgstop":
         sid, tr, ts = a
         time.sleep(int(os.environ.get("BRAIN_DEBOUNCE_SECS", "90")))
