@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agentmemory": {
+      "type": "http",
+      "url": "${user_config.brain_url}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.brain_secret}"
+      }
+    }
+  }
+}
