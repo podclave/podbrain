@@ -211,3 +211,51 @@ def test_engine_failure_is_visible_tool_error(harness, monkeypatch):
     body = r.json()["result"]
     assert body["isError"] is True
     assert "team brain call failed" in body["content"][0]["text"]
+
+
+def test_save_engine_failure_does_not_count_write(harness, monkeypatch):
+    client, _, writes = harness
+
+    async def boom(am_base, secret, method, path, payload=None):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(mcp_endpoint, "engine_call", boom)
+    r = rpc(client, "tools/call", {"name": "memory_save", "arguments": {"content": "x"}})
+    assert r.json()["result"]["isError"] is True
+    assert writes == []
+
+
+def test_governance_delete_requires_ids(harness):
+    client, calls, _ = harness
+    r = rpc(client, "tools/call", {"name": "memory_governance_delete", "arguments": {}})
+    assert r.json()["result"]["isError"] is True
+    assert calls == []
+
+
+def test_bad_limits_fall_back(harness):
+    client, calls, _ = harness
+    rpc(client, "tools/call", {"name": "memory_recall", "arguments": {"query": "x", "limit": 0}})
+    rpc(client, "tools/call", {"name": "memory_recall", "arguments": {"query": "x", "limit": "garbage"}})
+    # 1e400 is inf in Python; json= kwarg rejects inf, so send raw bytes instead
+    client.post("/mcp",
+                headers={**AUTH, "content-type": "application/json"},
+                content=(
+                    b'{"jsonrpc":"2.0","id":1,"method":"tools/call",'
+                    b'"params":{"name":"memory_recall","arguments":{"query":"x","limit":1e400}}}'
+                ))
+    assert [c["payload"]["limit"] for c in calls] == [10, 10, 10]
+
+
+def test_non_string_content_and_query_are_tool_errors(harness):
+    client, calls, _ = harness
+    r1 = rpc(client, "tools/call", {"name": "memory_save", "arguments": {"content": 123}})
+    r2 = rpc(client, "tools/call", {"name": "memory_smart_search", "arguments": {"query": ["x"]}})
+    assert r1.json()["result"]["isError"] is True and "content is required" in r1.json()["result"]["content"][0]["text"]
+    assert r2.json()["result"]["isError"] is True and "query is required" in r2.json()["result"]["content"][0]["text"]
+    assert calls == []
+
+
+def test_non_dict_arguments_rejected(harness):
+    client, _, _ = harness
+    r = rpc(client, "tools/call", {"name": "memory_recall", "arguments": [1]})
+    assert r.json()["error"]["code"] == -32602

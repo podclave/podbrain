@@ -10,7 +10,8 @@ Why this exists instead of clients running the npx shim:
     store AND REPORTS SUCCESS — here a down brain is a visible tool error;
   - claude.ai / Claude Desktop / Cowork can attach to the same URL as a remote
     connector (hence the ?key= auth fallback, mirroring /viewer?key=)
-    (note: ?key= puts the secret in access logs — acceptable for the admin-grade shared secret, same tradeoff as /viewer?key=).
+    (note: ?key= puts the secret in access logs — acceptable for the admin-grade
+    shared secret, same tradeoff as /viewer?key=).
 
 Stateless by design: every exposed tool is one request/response. No sessions, no
 SSE stream, no server-initiated messages — so GET/DELETE return 405, which the
@@ -33,6 +34,8 @@ SERVER_INFO = {"name": "team-brain", "version": "1.0.0"}
 # Curated surface: the tools SKILL.md teaches, nothing exotic (no leases/mesh/
 # sentinels against a shared brain). Descriptions and schemas mirror the shim so
 # model-facing behavior matches the fleet bundle. Filled in by Task 2.
+# Note: expandIds (smart_search) and operation (audit) are inherited schema warts —
+# the shim's validate() drops them too; kept for parity, not forwarded.
 def _t(name, description, properties, required=None):
     schema = {"type": "object", "properties": properties}
     if required:
@@ -120,17 +123,20 @@ def _norm_list(v):
 
 def _limit(v, fallback=10):
     try:
+        if isinstance(v, bool):
+            return fallback
         n = int(float(v))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return fallback
     return min(n, 100) if n > 0 else fallback
 
 
 async def call_tool(name: str, args: dict, am_base: str, secret: str, note_writes):
     if name == "memory_save":
-        content = (args.get("content") or "").strip()
-        if not content:
+        content = args.get("content")
+        if not isinstance(content, str) or not content.strip():
             raise ToolError("content is required")
+        content = content.strip()
         out = await engine_call(am_base, secret, "POST", "/agentmemory/remember", {
             "content": content, "type": args.get("type") or "fact",
             "concepts": _norm_list(args.get("concepts")),
@@ -138,19 +144,28 @@ async def call_tool(name: str, args: dict, am_base: str, secret: str, note_write
         note_writes(1)  # feeds the activity-triggered cataloger, like /agentmemory/remember
         return out
     if name in ("memory_recall", "memory_smart_search"):
-        query = (args.get("query") or "").strip()
-        if not query:
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
             raise ToolError("query is required")
+        query = query.strip()
         payload = {"query": query, "limit": _limit(args.get("limit"))}
+        fmt = args.get("format")
+        fmt = fmt.strip().lower() if isinstance(fmt, str) and fmt.strip() else None
         if name == "memory_recall":
-            payload["format"] = args.get("format") or "full"
+            payload["format"] = fmt or "full"
             path = "/agentmemory/search"
         else:
-            if args.get("format"):
-                payload["format"] = args["format"]
+            if fmt:
+                payload["format"] = fmt
             path = "/agentmemory/smart-search"
-        if args.get("token_budget"):
-            payload["token_budget"] = args["token_budget"]
+        tb = args.get("token_budget")
+        if isinstance(tb, (int, float, str)) and not isinstance(tb, bool):
+            try:
+                n = int(float(tb))
+                if n > 0:
+                    payload["token_budget"] = n
+            except (ValueError, OverflowError):
+                pass
         return await engine_call(am_base, secret, "POST", path, payload)
     if name == "memory_sessions":
         return await engine_call(am_base, secret, "GET",
@@ -167,9 +182,11 @@ async def call_tool(name: str, args: dict, am_base: str, secret: str, note_write
         return await engine_call(am_base, secret, "DELETE",
                                  "/agentmemory/governance/memories",
                                  {"memoryIds": ids, "reason": args.get("reason") or "client request"})
-    # GENERIC_TOOLS: the engine's own MCP dispatcher handles them.
-    return await engine_call(am_base, secret, "POST", "/agentmemory/mcp/call",
-                             {"name": name, "arguments": args})
+    if name in GENERIC_TOOLS:
+        # The engine's own MCP dispatcher handles these.
+        return await engine_call(am_base, secret, "POST", "/agentmemory/mcp/call",
+                                 {"name": name, "arguments": args})
+    raise ToolError(f"unhandled tool: {name}")  # a TOOLS entry with no dispatch branch
 
 
 def _tool_result(payload) -> dict:
@@ -196,7 +213,8 @@ def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
     @router.post("/mcp")
     async def mcp_post(request: Request):
         auth = request.headers.get("authorization")
-        if secret and not (_eq(auth, f"Bearer {secret}") or _eq(request.query_params.get("key"), secret)):  # no secret configured = fail open (dev) — mirrors app.py require_auth
+        # no secret configured = fail open (dev) — mirrors app.py require_auth
+        if secret and not (_eq(auth, f"Bearer {secret}") or _eq(request.query_params.get("key"), secret)):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         try:
             msg = json.loads(await request.body() or b"null")
@@ -223,11 +241,15 @@ def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
             return _rpc(msg_id, result={"tools": TOOLS})
         if method == "tools/call":
             name = params.get("name")
-            # membership checked against TOOLS directly — it is the ONLY gate keeping the curated surface curated (the dispatch fallback forwards anything to the engine)
+            # membership checked against TOOLS directly — it is the ONLY gate keeping
+            # the curated surface curated (the dispatch fallback forwards anything to the engine)
             if not any(t["name"] == name for t in TOOLS):
                 return _err(msg_id, -32602, f"unknown tool: {name}")
+            arguments = params.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                return _err(msg_id, -32602, "arguments must be an object")
             try:
-                payload = await call_tool(name, params.get("arguments") or {},
+                payload = await call_tool(name, arguments,
                                           am_base, secret, note_writes)
             except ToolError as e:
                 return _rpc(msg_id, result={
