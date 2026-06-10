@@ -85,3 +85,29 @@ def test_get_and_delete_are_405(harness):
     client, _, _ = harness
     assert client.get("/mcp", headers=AUTH).status_code == 405
     assert client.delete("/mcp", headers=AUTH).status_code == 405
+
+
+def test_wrong_credentials_rejected(harness):
+    client, _, _ = harness
+    assert rpc(client, "ping", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    r = client.post("/mcp?key=wrong", json={"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {}})
+    assert r.status_code == 401
+
+
+def test_unauthenticated_notification_still_401(harness):
+    client, _, _ = harness
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert r.status_code == 401
+
+
+def test_parse_error(harness):
+    client, _, _ = harness
+    r = client.post("/mcp", headers=AUTH, content="not json")
+    assert r.json()["error"]["code"] == -32700
+
+
+def test_non_object_params_rejected(harness):
+    client, _, _ = harness
+    r = client.post("/mcp", headers=AUTH, json={
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [1]})
+    assert r.json()["error"]["code"] == -32602

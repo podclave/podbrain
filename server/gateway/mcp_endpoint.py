@@ -9,7 +9,8 @@ Why this exists instead of clients running the npx shim:
   - the shim, on any failed proxy call, silently falls back to a throwaway local
     store AND REPORTS SUCCESS — here a down brain is a visible tool error;
   - claude.ai / Claude Desktop / Cowork can attach to the same URL as a remote
-    connector (hence the ?key= auth fallback, mirroring /viewer?key=).
+    connector (hence the ?key= auth fallback, mirroring /viewer?key=)
+    (note: ?key= puts the secret in access logs — acceptable for the admin-grade shared secret, same tradeoff as /viewer?key=).
 
 Stateless by design: every exposed tool is one request/response. No sessions, no
 SSE stream, no server-initiated messages — so GET/DELETE return 405, which the
@@ -18,6 +19,7 @@ Streamable HTTP spec permits for servers that don't offer a stream.
 Hand-rolled rather than the `mcp` pip package: the protocol subset we need is
 four methods, and the gateway keeps its zero-new-deps posture.
 """
+import hmac
 import json
 
 import httpx
@@ -32,7 +34,6 @@ SERVER_INFO = {"name": "team-brain", "version": "1.0.0"}
 # sentinels against a shared brain). Descriptions and schemas mirror the shim so
 # model-facing behavior matches the fleet bundle. Filled in by Task 2.
 TOOLS: list[dict] = []
-TOOL_NAMES = {t["name"] for t in TOOLS}
 
 
 class ToolError(Exception):
@@ -64,6 +65,10 @@ def _tool_result(payload) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(payload)}]}
 
 
+def _eq(a, b):
+    return hmac.compare_digest((a or "").encode(), b.encode())
+
+
 def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
     router = APIRouter()
 
@@ -74,22 +79,23 @@ def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
         return _rpc(id_, error={"code": code, "message": msg})
 
     @router.post("/mcp")
-    async def mcp(request: Request):
+    async def mcp_post(request: Request):
         auth = request.headers.get("authorization")
-        if secret and auth != f"Bearer {secret}" \
-                and request.query_params.get("key") != secret:
+        if secret and not (_eq(auth, f"Bearer {secret}") or _eq(request.query_params.get("key"), secret)):  # no secret configured = fail open (dev) — mirrors app.py require_auth
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         try:
             msg = json.loads(await request.body() or b"null")
         except ValueError:
             return _err(None, -32700, "parse error")
         if not isinstance(msg, dict):
-            return _err(None, -32600, "batch requests not supported")
+            return _err(None, -32600, "request must be a single JSON-RPC object (batching not supported)")
         method = msg.get("method")
         msg_id = msg.get("id")
         params = msg.get("params") or {}
         if msg_id is None:  # notification (e.g. notifications/initialized)
             return Response(status_code=202)
+        if not isinstance(params, dict):
+            return _err(msg_id, -32602, "params must be an object")
         if method == "initialize":
             ver = params.get("protocolVersion")
             return _rpc(msg_id, result={
@@ -102,7 +108,8 @@ def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
             return _rpc(msg_id, result={"tools": TOOLS})
         if method == "tools/call":
             name = params.get("name")
-            if name not in TOOL_NAMES:
+            # membership checked against TOOLS directly — it is the ONLY gate keeping the curated surface curated (the dispatch fallback forwards anything to the engine)
+            if not any(t["name"] == name for t in TOOLS):
                 return _err(msg_id, -32602, f"unknown tool: {name}")
             try:
                 payload = await call_tool(name, params.get("arguments") or {},
