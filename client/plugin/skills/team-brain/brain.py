@@ -443,7 +443,7 @@ def main():
     if hook_cmd and not (BRAIN_URL and BRAIN_SECRET):
         if cmd == "hook-sessionstart" and not guard():
             print("[team-brain] installed but not configured — memory features "
-                  "inactive (run /team-brain:setup)", file=sys.stderr)
+                  "inactive (run /team-brain:setup, or set BRAIN_URL/BRAIN_SECRET)", file=sys.stderr)
             print(json.dumps({
                 "systemMessage": "[team-brain] installed but not configured — "
                                  "memory features inactive (run /team-brain:setup)",
@@ -453,7 +453,7 @@ def main():
                         "The team-brain plugin is installed but NOT configured "
                         "(brain_url/brain_secret unset), so shared-memory recall/"
                         "capture is inactive this session. If the user asks about "
-                        "memory, tell them and point them at /team-brain:setup."}}))
+                        "memory, tell them and point them at /team-brain:setup (or BRAIN_URL/BRAIN_SECRET env vars for non-plugin installs)."}}))
         return
     USER_ID = identity()
 

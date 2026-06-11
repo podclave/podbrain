@@ -88,7 +88,7 @@ claude plugin enable team-brain@podbrain -s project    # install alone is inert 
 
 That's auto-recall every turn, passive capture of durable learnings (needs
 `python3` + a logged-in `claude` CLI), interactive memory tools, and `/team-brain:setup`
-for diagnostics. (If the installer mentions "1 userConfig option not yet set", that's the optional email for attribution — it falls back to your git email.) **Pick your scope deliberately — hooks capture wherever the
+for diagnostics. (If the installer mentions "1 userConfig option not yet set", that's the optional email for attribution — it falls back to your git email.) First use of a memory tool will show a one-time permission prompt (approve it; fleet installs pre-allow these via managed settings). **Pick your scope deliberately — hooks capture wherever the
 plugin is enabled:**
 
 - **Per-project (recommended, shown above):** `-s project` — active only inside
@@ -97,7 +97,7 @@ plugin is enabled:**
   team-brain@podbrain`. Every project on the machine now captures to this brain —
   only do this on a machine that's all one team's work.
 - **Different brains per project** (e.g. per-client brains under separate MSAs):
-  install `-s project` **without** `--config`, then put both values in each
+  install `-s project` **without** `--config`, enable it (`claude plugin enable team-brain@podbrain -s project`), then put both values in each
   project's `.claude/settings.local.json` (and never set the secret via
   `--config`/the prompt — a global secret overrides every project's):
 

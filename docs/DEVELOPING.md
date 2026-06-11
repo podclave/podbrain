@@ -10,7 +10,7 @@ Status: working, proven end-to-end on a real client→server deployment.
 
 - **Engine** — [`@agentmemory/agentmemory`](https://github.com/rohitg00/agentmemory) on the brain box; keyless local embeddings (`all-MiniLM-L6-v2`), BM25+vector+graph hybrid search. We don't fork it — we wrap it.
 - **Gateway** (`server/gateway/app.py`) — our FastAPI front door on `:8080`: auth, `/agentmemory/*` passthrough (incl. `/mcp/*`), `/ingest` + `/docs`, `/viewer` (cookie auth + a WS proxy for the live feed), `/maintenance` (the cataloger trigger), and `/mcp` (MCP-over-HTTP — BYO Claude Code clients and claude.ai/Desktop remote connectors attach directly; no npx shim, so the shim's silent-local-fallback cannot occur on this path).
-- **Client** (`client/skills/team-brain/brain.py`, stdlib only) — the deterministic **hooks** (auto-recall + passive distill) and the `file` ingest verb, over REST. Interactive memory (recall/save/curate) is the **agentmemory MCP**, *not* `brain.py`: shell hooks can't call MCP tools, so the two surfaces are split by capability.
+- **Client** (`client/plugin/skills/team-brain/brain.py`, stdlib only) — the deterministic **hooks** (auto-recall + passive distill) and the `file` ingest verb, over REST. Interactive memory (recall/save/curate) is the **agentmemory MCP**, *not* `brain.py`: shell hooks can't call MCP tools, so the two surfaces are split by capability.
 
 ## Key design decisions
 

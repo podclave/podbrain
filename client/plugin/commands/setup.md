@@ -22,7 +22,7 @@ when the skill loads). Work through these in order:
    in EVERY project on this machine. If that's not what the user wants, suggest
    project-scope enablement: `claude plugin install team-brain@podbrain -s project`
    from each project that should be connected.
-4. **Multi-brain (different brains per project).** Do NOT use `--config` for
+4. **Multi-brain (different brains per project).** Install and enable per project as in steps 2–3 (just without `--config`). Do NOT use `--config` for
    secrets in this mode (global keychain entries override per-project settings).
    If a secret was previously set via step 2, delete the team-brain@podbrain
    entry from `pluginSecrets` in `~/.claude/.credentials.json` first — that

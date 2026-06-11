@@ -33,7 +33,7 @@ SERVER_INFO = {"name": "team-brain", "version": "1.0.0"}
 
 # Curated surface: the tools SKILL.md teaches, nothing exotic (no leases/mesh/
 # sentinels against a shared brain). Descriptions and schemas mirror the shim so
-# model-facing behavior matches the fleet bundle. Filled in by Task 2.
+# model-facing behavior matches the fleet bundle.
 # Note: expandIds (smart_search) and operation (audit) are inherited schema warts —
 # the shim's validate() drops them too; kept for parity, not forwarded.
 def _t(name, description, properties, required=None):
