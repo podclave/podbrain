@@ -53,7 +53,7 @@ log "configured $ENV_FILE (TEAM_ID=$TEAM_ID, keyless local embeddings)"
 
 # --- 3. gateway (copy from repo) + venv -------------------------------------
 mkdir -p "$GW_DIR" "$DOCS_DIR"
-cp "$HERE/gateway/app.py" "$HERE/gateway/requirements.txt" "$HERE/gateway/recover-engine.sh" "$GW_DIR/"
+cp "$HERE/gateway/app.py" "$HERE/gateway/mcp_endpoint.py" "$HERE/gateway/requirements.txt" "$HERE/gateway/recover-engine.sh" "$GW_DIR/"
 chmod +x "$GW_DIR/recover-engine.sh"
 [ -d "$GW_DIR/.venv" ] || { log "creating gateway venv"; python3 -m venv "$GW_DIR/.venv"; }
 log "installing gateway deps"
