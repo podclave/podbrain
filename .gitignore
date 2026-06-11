@@ -13,3 +13,6 @@ brain-docs/
 data/
 *.db
 *.pid
+
+# local working notes (referenced by docs/superpowers/specs as session logs)
+tmp/

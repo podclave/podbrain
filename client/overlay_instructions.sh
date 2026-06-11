@@ -14,8 +14,8 @@ here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # owner | overlay dest (on the client; relative paths land in $HOME) | repo source (rel. to client/) | note
 overlays=(
-  "user|.claude/skills/team-brain/SKILL.md|skills/team-brain/SKILL.md|"
-  "user|.claude/skills/team-brain/brain.py|skills/team-brain/brain.py|"
+  "user|.claude/skills/team-brain/SKILL.md|plugin/skills/team-brain/SKILL.md|"
+  "user|.claude/skills/team-brain/brain.py|plugin/skills/team-brain/brain.py|"
   "user|.env.podclave.brain|env.podclave.brain.template|SECRETS: set real BRAIN_URL/BRAIN_SECRET here (values live in Podclave, never git)"
   "root|/etc/claude-code/managed-settings.d/20-team-brain.json|managed-settings.d/20-team-brain.json|"
   "root|/etc/claude-code/managed-mcp.json|managed-mcp.json|"

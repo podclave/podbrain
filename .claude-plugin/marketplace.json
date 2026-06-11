@@ -1,0 +1,11 @@
+{
+  "name": "podbrain",
+  "owner": { "name": "Podclave" },
+  "plugins": [
+    {
+      "name": "team-brain",
+      "source": "./client/plugin",
+      "description": "Connect this machine's Claude Code to a shared podbrain team memory (auto-recall, passive capture, document ingest)."
+    }
+  ]
+}

@@ -68,18 +68,31 @@ else
   sprite-env services create agentmemory --cmd "$NODE_BIN" --args "$AM_CLI,--port,3111" \
     --env "HOME=$HOME" --dir "$HOME" --no-stream >/dev/null
 fi
-if svc_exists team-brain; then log "restart team-brain"; sprite-env services restart team-brain >/dev/null
-else
-  log "create service: team-brain gateway (public :8080)"
-  # NOTE: deliberately NOT `--needs agentmemory`. If the gateway depended on the engine,
-  # sprite-env would refuse to restart the engine while the gateway runs — so the engine
-  # watchdog (recover-engine.sh) couldn't cycle a wedged engine without also bouncing the
-  # gateway. Decoupled, the engine restarts on its own; the gateway tolerates a briefly-
-  # absent engine (it just returns errors until it's back).
+# NOTE: deliberately NOT `--needs agentmemory`. If the gateway depended on the engine,
+# sprite-env would refuse to restart the engine while the gateway runs — so the engine
+# watchdog (recover-engine.sh) couldn't cycle a wedged engine without also bouncing the
+# gateway. Decoupled, the engine restarts on its own; the gateway tolerates a briefly-
+# absent engine (it just returns errors until it's back).
+create_team_brain(){
   sprite-env services create team-brain --cmd "$GW_DIR/.venv/bin/python" \
     --args "-m,uvicorn,app:app,--host,0.0.0.0,--port,8080" \
     --env "HOME=$HOME,AGENTMEMORY_SECRET=$SECRET" \
     --dir "$GW_DIR" --http-port 8080 --no-stream >/dev/null
+}
+if svc_exists team-brain; then
+  # Migrate definitions that predate the watchdog decoupling (42c2756): a stale
+  # `needs: agentmemory` binding makes sprite-env refuse to restart the engine,
+  # silently breaking recover-engine.sh. Recreate instead of restart in that case.
+  if sprite-env services get team-brain | grep -q '"needs":\[[^]]*"agentmemory"'; then
+    log "migrating team-brain: dropping needs-binding on agentmemory (watchdog decoupling)"
+    sprite-env services delete team-brain >/dev/null
+    create_team_brain
+  else
+    log "restart team-brain"; sprite-env services restart team-brain >/dev/null
+  fi
+else
+  log "create service: team-brain gateway (public :8080)"
+  create_team_brain
 fi
 
 # --- 5. wait for health + report --------------------------------------------

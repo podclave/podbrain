@@ -7,7 +7,7 @@ strip, prompt-hijack delimiting, same-session dedup, offset gating, since-marker
 sweep (with the sweep-guard derived from a shared constant so it can't go stale).
 
 ROLE: the INTERACTIVE memory surface is now the agentmemory MCP (recall/save/curate
-via mcp__agentmemory__memory_* tools). This script is the part the MCP can't do:
+via the agentmemory MCP memory_* tools). This script is the part the MCP can't do:
 the deterministic HOOKS (auto-recall + passive keyless distillation — shell hooks
 can't call MCP tools, so they use the REST recall/_save paths here) plus `file`
 document ingest (gateway-only endpoint, not in the engine MCP). The recall/remember
@@ -25,8 +25,9 @@ Subcommands:
   hook-sessionstart         SessionStart: catch-up sweep
   distill <sid> <path>      distill durable learnings from a transcript slice
 
-Config (BRAIN_URL, BRAIN_SECRET): env if set, else ~/.env.podclave.brain / ./brain.env.
-Identity: ~/.podclave/user-email, falling back to git email / $USER.
+Config (BRAIN_URL, BRAIN_SECRET): env if set, else plugin config (CLAUDE_PLUGIN_OPTION_*),
+else ~/.env.podclave.brain / ./brain.env.
+Identity: BRAIN_USER / plugin USER_EMAIL, else ~/.podclave/user-email, else git email / $USER.
 Deps: python3 only (stdlib). External processes: claude, sprite-env (both optional/guarded).
 """
 import os, sys, re, json, time, fcntl, shutil, socket, subprocess
@@ -35,6 +36,9 @@ import urllib.request, urllib.parse, urllib.error
 HOME = os.path.expanduser("~")
 SELF = os.path.abspath(__file__)
 STATE = os.path.join(HOME, ".claude", ".brain")
+# Opt-out knob: keep auto-recall but skip passive capture (plugins have no
+# per-hook disable, so this is the recall-only escape hatch).
+NO_DISTILL = bool(os.environ.get("BRAIN_NO_DISTILL"))
 
 # This phrase lives inside INSTRUCTION *and* is the sweep's skip-guard, so the two
 # can never drift apart (a single literal, not two that must be kept in sync).
@@ -57,6 +61,18 @@ INSTRUCTION = (
 
 # --- config + identity -------------------------------------------------------
 def load_config():
+    """Resolve config into env and return (url, secret) — never exits; the
+    caller owns the missing-config policy (strict CLI error vs quiet hooks)."""
+    # Plugin installs export userConfig as CLAUDE_PLUGIN_OPTION_* (per-project
+    # pluginConfigs overrides flow through these too); map them in FIRST so one
+    # chain serves plugin, fleet-overlay, and bare-env installs with uniform
+    # precedence: explicit env > plugin config > env file (for identity too —
+    # a file-sourced BRAIN_USER must not beat the plugin's user_email).
+    for src, dst in (("CLAUDE_PLUGIN_OPTION_BRAIN_URL", "BRAIN_URL"),
+                     ("CLAUDE_PLUGIN_OPTION_BRAIN_SECRET", "BRAIN_SECRET"),
+                     ("CLAUDE_PLUGIN_OPTION_USER_EMAIL", "BRAIN_USER")):
+        if os.environ.get(src) and not os.environ.get(dst):
+            os.environ[dst] = os.environ[src]
     if not (os.environ.get("BRAIN_URL") and os.environ.get("BRAIN_SECRET")):
         for f in (os.path.join(HOME, ".env.podclave.brain"),
                   os.path.join(os.path.dirname(SELF), "brain.env")):
@@ -65,13 +81,12 @@ def load_config():
                     m = re.match(r'\s*(?:export\s+)?([A-Za-z_]+)=(.*)', line)
                     if m:
                         os.environ.setdefault(m.group(1), m.group(2).strip().strip('"').strip("'"))
-    url, sec = os.environ.get("BRAIN_URL"), os.environ.get("BRAIN_SECRET")
-    if not url or not sec:
-        sys.exit("set BRAIN_URL and BRAIN_SECRET (env or ~/.env.podclave.brain)")
-    return url, sec
+    return os.environ.get("BRAIN_URL"), os.environ.get("BRAIN_SECRET")
 
 
 def identity():
+    # BRAIN_USER is the canonical name; load_config() already folded the plugin's
+    # user_email into it (explicit env wins over plugin config).
     u = os.environ.get("BRAIN_USER")
     if not u:
         p = os.path.join(HOME, ".podclave", "user-email")
@@ -80,7 +95,7 @@ def identity():
     if not u:
         try:
             u = subprocess.run(["git", "config", "user.email"], capture_output=True,
-                               text=True).stdout.strip()
+                               text=True, timeout=5).stdout.strip()
         except Exception:
             u = ""
     return u or os.environ.get("USER", "unknown")
@@ -424,6 +439,28 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     a = sys.argv[2:]
     BRAIN_URL, BRAIN_SECRET = load_config()
+    if not (BRAIN_URL and BRAIN_SECRET):
+        # Unconfigured-install policy, all in one place: CLI verbs stay strict
+        # (clear error + exit 1); hooks must never noise up or block a turn, so
+        # they exit 0 quietly — except SessionStart, which surfaces it ONCE
+        # (systemMessage for the human, additionalContext for the model; stderr
+        # only reaches the debug log).
+        if not (cmd.startswith("hook-") or cmd.startswith("_bg")):
+            sys.exit("set BRAIN_URL and BRAIN_SECRET (env, plugin config, or ~/.env.podclave.brain)")
+        if cmd == "hook-sessionstart" and not guard():
+            print("[team-brain] installed but not configured — memory features "
+                  "inactive (run /team-brain:setup, or set BRAIN_URL/BRAIN_SECRET)", file=sys.stderr)
+            print(json.dumps({
+                "systemMessage": "[team-brain] installed but not configured — "
+                                 "memory features inactive (run /team-brain:setup)",
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext":
+                        "The team-brain plugin is installed but NOT configured "
+                        "(brain_url/brain_secret unset), so shared-memory recall/"
+                        "capture is inactive this session. If the user asks about "
+                        "memory, tell them and point them at /team-brain:setup (or BRAIN_URL/BRAIN_SECRET env vars for non-plugin installs)."}}))
+        return
     USER_ID = identity()
 
     if cmd == "recall":
@@ -459,12 +496,12 @@ def main():
         if warn:
             out.append(
                 "<team-brain-status>\n⚠ TEAM BRAIN UNAVAILABLE — %s. While this lasts, "
-                "auto-recall is empty AND new memories are NOT reaching the shared brain: "
-                "the agentmemory MCP silently falls back to a throwaway local store and "
-                "reports success, so do not treat anything \"saved\" this session as "
-                "persisted. Tell the user plainly; details via "
-                "`python3 ~/.claude/skills/team-brain/brain.py health`.\n</team-brain-status>"
-                % warn)
+                "auto-recall is empty AND new memories are NOT reaching the shared "
+                "brain (memory tool calls will error; on fleet installs using the "
+                "stdio shim they may even falsely report success). Do not treat "
+                "anything \"saved\" this session as persisted; tell the user "
+                "plainly. Details: `python3 %s health`.\n</team-brain-status>"
+                % (warn, SELF))
         if ctx.strip():
             out.append(
                 "<team-brain-context>\n# Possibly-relevant notes from the team brain — "
@@ -475,7 +512,7 @@ def main():
         if out:
             print("\n".join(out))
     elif cmd == "hook-stop":
-        if guard():
+        if guard() or NO_DISTILL:
             return
         os.makedirs(STATE, exist_ok=True)
         d = stdin_json(); sid, tr = d.get("session_id"), d.get("transcript_path")
@@ -485,7 +522,7 @@ def main():
         open(os.path.join(STATE, "ping-" + sid), "w").write(ts)
         detach("_bgstop", sid, tr, ts)
     elif cmd == "hook-sessionend":
-        if guard():
+        if guard() or NO_DISTILL:
             return
         d = stdin_json(); sid, tr = d.get("session_id"), d.get("transcript_path")
         if not (sid and tr and os.path.isfile(tr)):
@@ -494,7 +531,16 @@ def main():
     elif cmd == "hook-sessionstart":
         if guard():
             return
-        detach("_bgsweep", stdin_json().get("session_id") or "none")
+        # Name the attached brain (compliance: multi-brain machines must be able
+        # to SEE which brain this project captures to — wrong-brain attachment
+        # should be noticeable, not silent).
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext":
+                "team-brain: this session is connected to %s (memories saved/"
+                "captured there are attributed to %s)." % (BRAIN_URL, USER_ID)}}))
+        if not NO_DISTILL:
+            detach("_bgsweep", stdin_json().get("session_id") or "none")
     elif cmd == "_bgstop":
         sid, tr, ts = a
         time.sleep(int(os.environ.get("BRAIN_DEBOUNCE_SECS", "90")))

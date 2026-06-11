@@ -9,6 +9,9 @@ Routes (all bearer-gated except /healthz):
                         login via /viewer?key=<secret> (sets an HttpOnly cookie)
   /agentmemory/*        reverse-proxy to the agentmemory REST API (:3111); accepts
                         bearer OR the viewer cookie (gateway injects the engine bearer)
+  /mcp                  POST: stateless MCP (Streamable HTTP) — the keyless client
+                        surface; curated memory tools fulfilled via the engine REST
+                        API (see mcp_endpoint.py)
   /stream/*  (WS)       proxy the viewer's live-feed WebSocket to the streams worker
                         (:3112); cookie-authed (browsers can't header-auth a WS)
 
@@ -36,6 +39,7 @@ from fastapi import (FastAPI, Header, HTTPException, Request, UploadFile, File,
                      Form, WebSocket, WebSocketDisconnect)
 from fastapi.responses import (JSONResponse, Response, FileResponse,
                                StreamingResponse, RedirectResponse)
+from mcp_endpoint import build_router as build_mcp_router
 
 AM_BASE = os.environ.get("AM_BASE", "http://localhost:3111")
 VIEWER_BASE = os.environ.get("VIEWER_BASE", "http://localhost:3113")
@@ -215,6 +219,11 @@ def note_writes(n: int = 1):
            and not MAINT["running"])
     if due:
         asyncio.create_task(run_maintenance(reason="activity"))
+
+
+# MCP-over-HTTP: the keyless client surface (Claude Code plugin / remote
+# connectors). Mounted here so memory_save shares the cataloger write counter.
+app.include_router(build_mcp_router(SECRET, AM_BASE, note_writes))
 
 
 # ---------- endpoints ----------

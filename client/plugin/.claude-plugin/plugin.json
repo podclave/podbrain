@@ -1,0 +1,29 @@
+{
+  "name": "team-brain",
+  "version": "0.1.0",
+  "description": "Shared team memory for Claude Code — auto-recall every turn, passive capture of durable learnings, and document ingest, against a self-hosted podbrain server.",
+  "author": { "name": "Podclave" },
+  "homepage": "https://github.com/podclave/podbrain",
+  "license": "MIT",
+  "defaultEnabled": false,
+  "userConfig": {
+    "brain_url": {
+      "type": "string",
+      "title": "Brain URL",
+      "description": "Your team's brain, e.g. https://my-brain.sprites.app (no trailing slash)",
+      "required": true
+    },
+    "brain_secret": {
+      "type": "string",
+      "title": "Brain secret",
+      "description": "The team bearer secret (ask your brain admin; on the brain box it's ~/.agentmemory/team_secret.txt)",
+      "sensitive": true,
+      "required": true
+    },
+    "user_email": {
+      "type": "string",
+      "title": "Your email (attribution)",
+      "description": "Stamped on memories you save (—[saved by …]). Optional — falls back to git config user.email."
+    }
+  }
+}
