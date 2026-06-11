@@ -22,6 +22,7 @@ a single spin-down Sprite, keyless (local embeddings + the Claude subscription).
         │  gateway (FastAPI) — the front door    │
         │   /agentmemory/*  passthrough          │
         │   /ingest/upload  /docs/{id}           │
+        │   /mcp  (MCP over HTTP — BYO clients)  │
         │   /maintenance/run + /status (cataloger)│
         │   /viewer  /healthz                    │
         └───┬───────────────┬───────────────────┘
@@ -41,9 +42,10 @@ a single spin-down Sprite, keyless (local embeddings + the Claude subscription).
 
 1. `git clone https://github.com/podclave/podbrain.git && cd podbrain`
 2. `bash server/install-brain.sh` — stand up the brain (once)
-3. `bash client/overlay_instructions.sh` — render the client overlays
-4. Paste the printed blocks into your Podclave `team-brain` bundle
-5. Done — every teammate's Claude Code is now wired up
+3. Teammates with their own Claude Code: `claude plugin install team-brain@podbrain` (see §2)
+4. *(Podclave fleet)* `bash client/overlay_instructions.sh` — render the client overlays
+5. *(Podclave fleet)* Paste the printed blocks into your Podclave `team-brain` bundle
+6. Done — teammates are wired up
 
 Details for each step below.
 
@@ -71,7 +73,51 @@ curl https://<brain>.sprites.app/healthz
 curl -H "Authorization: Bearer <secret>" https://<brain>.sprites.app/agentmemory/health
 ```
 
-## 2. Roll out to the team (client overlay bundle)
+## 2. Connect your own Claude Code (plugin)
+
+Any Claude Code ≥ 2.1.154 can join — no Podclave required:
+
+```bash
+claude plugin marketplace add podclave/podbrain        # once per machine
+cd <the project you want connected>
+claude plugin install team-brain@podbrain -s project \
+  --config brain_url=https://<brain>.sprites.app \
+  --config brain_secret=<secret>
+```
+
+That's auto-recall every turn, passive capture of durable learnings (needs
+`python3` + a logged-in `claude` CLI), interactive memory tools, and `/team-brain:setup`
+for diagnostics. **Pick your scope deliberately — hooks capture wherever the
+plugin is enabled:**
+
+- **Per-project (recommended, shown above):** `-s project` — active only inside
+  that project, inert everywhere else. Repeat per project.
+- **Whole machine:** install without `-s`, then `claude plugin enable
+  team-brain@podbrain`. Every project on the machine now captures to this brain —
+  only do this on a machine that's all one team's work.
+- **Different brains per project** (e.g. per-client brains under separate MSAs):
+  install `-s project` **without** `--config`, then put both values in each
+  project's `.claude/settings.local.json` (and never set the secret via
+  `--config`/the prompt — a global secret overrides every project's):
+
+  ```json
+  { "pluginConfigs": { "team-brain@podbrain": { "options": {
+      "brain_url": "https://foo-brain.sprites.app",
+      "brain_secret": "<foo secret>" } } } }
+  ```
+
+Each session announces which brain it's connected to; if the plugin is installed
+but unconfigured it says so once and stays quiet (recall/capture inactive).
+Recall-only mode: set `BRAIN_NO_DISTILL=1`.
+
+### Other Claude surfaces (claude.ai, Desktop, Cowork)
+
+The brain speaks MCP over HTTP directly — add it as a remote/custom connector
+pointing at `https://<brain>.sprites.app/mcp` (bearer: the team secret). That
+gives interactive recall/save/curation anywhere Claude runs; the automatic
+hooks remain a Claude Code thing.
+
+## 3. Roll out a Podclave fleet (client overlay bundle)
 
 The client ships as a **Podclave config bundle** — 5 overlay files, no installer.
 On the brain box, render them all:
@@ -108,13 +154,7 @@ Key things to know:
   - Needs **node** on the client (the shim; `npx -y` self-fetches on first use) and
     Claude Code **≥ 2.1.149** (for `allowAllClaudeAiMcps`).
 
-> **Single-VM dogfood without Podclave:** place the files yourself — copy
-> `client/skills/team-brain/{SKILL.md,brain.py}` to `~/.claude/skills/team-brain/`,
-> save the `.env.podclave.brain` block from `overlay_instructions.sh` to `~/.env.podclave.brain`, and copy
-> `client/managed-settings.d/20-team-brain.json` + `client/managed-mcp.json` into
-> `/etc/claude-code/` (the latter as `/etc/claude-code/managed-mcp.json`, root).
-
-## 3. Schedule the cataloger
+## 4. Schedule the cataloger
 
 The gateway runs consolidation on its own when the box is already awake (after
 `BRAIN_MAINT_WRITES`, default 20, writes and `BRAIN_MAINT_MIN_SECS`, default 1800,
@@ -155,7 +195,7 @@ own while the gateway keeps serving (briefly erroring until it's back). Recovery
 to `~/.agentmemory/recover.log`, single-flighted via `flock`, and preserves all stored
 memories (the restart is a process cycle, not a wipe).
 
-## 4. Verify a teammate VM
+## 5. Verify a teammate VM
 
 After overlay Setup on a teammate's VM:
 
@@ -175,7 +215,7 @@ Then in a real Claude Code session there:
 - "file this `<path>`" → `brain.py file` ingests it server-side (pdf/docx/pptx/md),
   and its contents become searchable via the MCP.
 
-## 5. Rotate the secret
+## 6. Rotate the secret
 
 ```bash
 openssl rand -hex 24 > ~/.agentmemory/team_secret.txt          # on the brain Sprite
