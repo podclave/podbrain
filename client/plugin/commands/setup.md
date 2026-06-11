@@ -17,7 +17,7 @@ when the skill loads). Work through these in order:
 2. **Single-brain configure (the normal case).** Tell the user to run:
    `claude plugin install team-brain@podbrain --config brain_url=<URL> --config brain_secret=<SECRET>`
    (works on an already-installed plugin; values also settable interactively via
-   `/plugin` → team-brain → configure). Then restart the session and re-run step 1.
+   `/plugin` → team-brain → configure). If the plugin was newly installed, it also needs `claude plugin enable team-brain@podbrain` (with `-s project` for project-scope installs) — install alone is inert by design. Then restart the session and re-run step 1.
 3. **Heads-up on scope.** If the plugin is enabled at USER scope, hooks capture
    in EVERY project on this machine. If that's not what the user wants, suggest
    project-scope enablement: `claude plugin install team-brain@podbrain -s project`
@@ -40,3 +40,6 @@ when the skill loads). Work through these in order:
    the SessionStart context names the RIGHT brain.
 5. Optional: `BRAIN_NO_DISTILL=1` in the environment keeps auto-recall but turns
    off passive capture, if the user wants recall-only.
+6. **Removing.** `claude plugin disable team-brain@podbrain -s <scope>` first, then
+   `claude plugin uninstall team-brain@podbrain` (uninstall refuses while enabled
+   at project scope). Uninstall also removes the stored config and secret.

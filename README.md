@@ -83,15 +83,16 @@ cd <the project you want connected>
 claude plugin install team-brain@podbrain -s project \
   --config brain_url=https://<brain>.sprites.app \
   --config brain_secret=<secret>
+claude plugin enable team-brain@podbrain -s project    # install alone is inert by design
 ```
 
 That's auto-recall every turn, passive capture of durable learnings (needs
 `python3` + a logged-in `claude` CLI), interactive memory tools, and `/team-brain:setup`
-for diagnostics. **Pick your scope deliberately — hooks capture wherever the
+for diagnostics. (If the installer mentions "1 userConfig option not yet set", that's the optional email for attribution — it falls back to your git email.) **Pick your scope deliberately — hooks capture wherever the
 plugin is enabled:**
 
 - **Per-project (recommended, shown above):** `-s project` — active only inside
-  that project, inert everywhere else. Repeat per project.
+  that project, inert everywhere else. Repeat per project. Note: the URL/secret you `--config` are stored once globally — a second project's install inherits them (use the multi-brain recipe below for different brains).
 - **Whole machine:** install without `-s`, then `claude plugin enable
   team-brain@podbrain`. Every project on the machine now captures to this brain —
   only do this on a machine that's all one team's work.
