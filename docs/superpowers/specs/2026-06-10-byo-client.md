@@ -141,7 +141,7 @@ is unchanged in behavior).
 ## Key verified facts these designs rest on
 
 (All empirically tested on Claude Code 2.1.170 or confirmed in current docs —
-full log with dates in `tmp/CLIENT_INSTALL_OPTIONS.txt`.)
+full verified-facts list now lives in [../DEVELOPING.md](../DEVELOPING.md) "Client-plugin lessons".)
 
 - The engine has **no MCP transport** of its own; the stdio shim proxies 7 tools
   to 6 REST endpoints + a generic `/agentmemory/mcp/call` catch-all.
