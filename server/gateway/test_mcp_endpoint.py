@@ -125,6 +125,15 @@ def test_tools_list_has_curated_surface(harness):
         assert t["description"] and t["inputSchema"]["type"] == "object"
 
 
+def test_no_dead_parameters_advertised(harness):
+    """Params the dispatch drops must not be advertised — a model that uses a
+    dead param burns a turn discovering it does nothing (seen live: expandIds)."""
+    client, _, _ = harness
+    for t in rpc(client, "tools/list").json()["result"]["tools"]:
+        props = set(t["inputSchema"]["properties"])
+        assert not props & {"expandIds", "operation"}, t["name"]
+
+
 def test_every_listed_tool_dispatches(harness):
     """TOOLS and call_tool's if-chain must stay in sync — a listed tool with no
     dispatch branch only fails at call time ('unhandled tool'), so call them all."""

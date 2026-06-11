@@ -33,9 +33,11 @@ SERVER_INFO = {"name": "team-brain", "version": "1.0.0"}
 
 # Curated surface: the tools SKILL.md teaches, nothing exotic (no leases/mesh/
 # sentinels against a shared brain). Descriptions and schemas mirror the shim so
-# model-facing behavior matches the fleet bundle.
-# Note: expandIds (smart_search) and operation (audit) are inherited schema warts —
-# the shim's validate() drops them too; kept for parity, not forwarded.
+# model-facing behavior matches the fleet bundle — EXCEPT two upstream params we
+# deliberately omit rather than inherit: expandIds (smart_search) and operation
+# (audit). Upstream advertises both but drops them in proxy mode, and the
+# engine's own expansion path returns empty (verified live) — a model that uses
+# an advertised-but-dead param burns a turn discovering it does nothing.
 def _t(name, description, properties, required=None):
     schema = {"type": "object", "properties": properties}
     if required:
@@ -64,9 +66,9 @@ TOOLS = [
         "token_budget": _NUM("Optional token budget to trim returned results")},
        required=["query"]),
     _t("memory_smart_search",
-       "Hybrid semantic+keyword search with progressive disclosure.",
+       "Hybrid semantic+keyword search with progressive disclosure. For the full "
+       "text of a truncated result, use memory_recall with format \"full\".",
        {"query": _STR("Search query"),
-        "expandIds": _STR("Comma-separated observation IDs to expand"),
         "limit": _NUM("Max results (default 10)")},
        required=["query"]),
     _t("memory_sessions",
@@ -75,8 +77,7 @@ TOOLS = [
     _t("memory_export", "Export all memory data as JSON.", {}),
     _t("memory_audit",
        "View the audit trail of memory operations.",
-       {"operation": _STR("Filter by operation type"),
-        "limit": _NUM("Max entries (default 50)")}),
+       {"limit": _NUM("Max entries (default 50)")}),
     _t("memory_governance_delete",
        "Delete specific memories with audit trail.",
        {"memoryIds": _STR("Comma-separated memory IDs to delete"),
