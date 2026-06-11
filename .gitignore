@@ -14,5 +14,5 @@ data/
 *.db
 *.pid
 
-# local working notes (referenced by docs/superpowers/specs as session logs)
+# local working notes / scratch
 tmp/
