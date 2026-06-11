@@ -1,8 +1,10 @@
 {
   "name": "team-brain",
-  "version": "0.1.0",
-  "description": "Shared team memory for Claude Code — auto-recall every turn, passive capture of durable learnings, and document ingest, against a self-hosted podbrain server.",
-  "author": { "name": "Podclave" },
+  "version": "0.2.0",
+  "description": "Shared team memory for Claude Code \u2014 auto-recall every turn, passive capture of durable learnings, and document ingest, against a self-hosted podbrain server.",
+  "author": {
+    "name": "Podclave"
+  },
   "homepage": "https://github.com/podclave/podbrain",
   "license": "MIT",
   "defaultEnabled": false,
@@ -23,7 +25,7 @@
     "user_email": {
       "type": "string",
       "title": "Your email (attribution)",
-      "description": "Stamped on memories you save (—[saved by …]). Optional — falls back to git config user.email."
+      "description": "Stamped on memories you save (\u2014[saved by \u2026]). Optional \u2014 falls back to git config user.email."
     }
   }
 }

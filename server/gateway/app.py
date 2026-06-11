@@ -237,6 +237,7 @@ async def ingest_upload(
     file: UploadFile = File(...),
     note: str = Form(""),
     user: str = Form("unknown"),
+    project: str = Form(""),  # bare repo name (client-derived); optional
     authorization: str | None = Header(default=None),
 ):
     require_auth(authorization)
@@ -267,8 +268,10 @@ async def ingest_upload(
         prov = f"[source: {file.filename} | doc:{doc_id} | chunk {idx+1}/{len(chunks)} | filed by {user}"
         prov += f" | note: {note}]" if note else "]"
         body = f"{ch}\n\n{prov}"
-        r = await am_post("/agentmemory/remember",
-                          {"content": body, "type": "reference"})
+        chunk_payload = {"content": body, "type": "reference"}
+        if project:
+            chunk_payload["project"] = project  # engine persists this natively
+        r = await am_post("/agentmemory/remember", chunk_payload)
         if r.status_code in (200, 201):
             pushed += 1
 

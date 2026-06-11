@@ -21,6 +21,7 @@ pointed at the team's central server.
 ## Conventions
 - Memory means the team brain — never write to or create a local `MEMORY.md`/memory file; never tell the user you've saved something unless it went to the brain (via the MCP).
 - Keep saved facts **atomic and self-contained** — one fact per `memory_save`.
+- Saves carry a repo scope: auto-capture stamps it itself; for interactive `memory_save`, pass the `project` named in the session-start context (omit it for facts that aren't repo-specific).
 - The brain supersedes near-duplicate saves automatically (keeping the newer phrasing), so prefer a clear, specific re-statement over worrying about exact-match dupes; reach for `memory_governance_delete` only for genuinely redundant records.
 - Relevant knowledge is also auto-injected each turn inside `<team-brain-context>` (the recall hook); use `memory_smart_search` explicitly for deeper or query-specific lookups.
 - Destructive curation (`memory_governance_delete`) acts on **shared, team-wide** memory and will prompt — confirm scope with the user before bulk deletes.
