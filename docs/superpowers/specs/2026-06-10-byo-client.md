@@ -1,7 +1,7 @@
 # BYO Client: Gateway MCP Endpoint + team-brain Plugin — Design Spec
 
 **Date:** 2026-06-10
-**Status:** approved direction (research complete; see `tmp/CLIENT_INSTALL_OPTIONS.txt` — a local-only working log on the dev box — for the full verified-facts trail)
+**Status:** approved direction (research complete; the verified plugin mechanics live in [../DEVELOPING.md](../DEVELOPING.md) "Client-plugin lessons")
 **Plans:** `docs/superpowers/plans/2026-06-10-gateway-mcp-endpoint.md` (build first), `docs/superpowers/plans/2026-06-10-team-brain-plugin.md`
 
 ## Problem
