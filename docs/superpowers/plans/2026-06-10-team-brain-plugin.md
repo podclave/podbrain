@@ -512,6 +512,9 @@ when the skill loads). Work through these in order:
    from each project that should be connected.
 4. **Multi-brain (different brains per project).** Do NOT use `--config` for
    secrets in this mode (global keychain entries override per-project settings).
+   If a secret was previously set via step 2, delete the team-brain@podbrain
+   entry from `pluginSecrets` in `~/.claude/.credentials.json` first — that
+   leftover global secret silently overrides every per-project one.
    Instead, in each project write `.claude/settings.local.json`:
 
    ```json
