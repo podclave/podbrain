@@ -33,7 +33,7 @@ but aren't.
   allowlists vs `managed-mcp.json` exclusivity). The 5-overlay bundle stays
   as-is; revisit from first principles after the plugin is proven.
 - **Knowledge-repo integration** (durable git store, memory→doc citations,
-  folder auto-ingest) — Ben's workstream; the plugin stays multi-skill-friendly
+  folder auto-ingest) — a separate teammate workstream; the plugin stays multi-skill-friendly
   so a knowledge-repo skill can slot in later.
 - **Viewer "seed data" button**: investigated — the demo seeder writes via plain
   observation POSTs (no dedicated route to block at the gateway). Needs an
@@ -169,7 +169,7 @@ full log with dates in `tmp/CLIENT_INSTALL_OPTIONS.txt`.)
 - Cold-wake latency of a suspended brain vs the client's MCP connect
   timeout/backoff (test in Plan 1's live verification; document `MCP_TIMEOUT` if
   flaky).
-- What Claude Desktop/Cowork load from a plugin (Ben expects skills there);
+- What Claude Desktop/Cowork load from a plugin (teammates expect skills there);
   worst case those surfaces are connector-only — acceptable v1.
 - Does changing `userConfig` mid-session reconnect the plugin MCP server, or
   does it need a restart?
