@@ -28,6 +28,8 @@ Subcommands:
 Config (BRAIN_URL, BRAIN_SECRET): env if set, else plugin config (CLAUDE_PLUGIN_OPTION_*),
 else ~/.env.podclave.brain / ./brain.env.
 Identity: BRAIN_USER / plugin USER_EMAIL, else ~/.podclave/user-email, else git email / $USER.
+Project scope: saves are stamped with the working repo's bare name (BRAIN_PROJECT
+overrides; non-git dirs stay unscoped) so one brain can tell its repos apart.
 Deps: python3 only (stdlib). External processes: claude, sprite-env (both optional/guarded).
 """
 import os, sys, re, json, time, fcntl, shutil, socket, subprocess
@@ -39,6 +41,38 @@ STATE = os.path.join(HOME, ".claude", ".brain")
 # Opt-out knob: keep auto-recall but skip passive capture (plugins have no
 # per-hook disable, so this is the recall-only escape hatch).
 NO_DISTILL = bool(os.environ.get("BRAIN_NO_DISTILL"))
+
+_project_cache = None
+
+
+def project_id():
+    """Bare repo name for the working dir, or '' (unscoped). Stamped onto saves
+    so memories within one brain can be told apart by source repo. BRAIN_PROJECT
+    overrides (set-but-empty = explicitly unscoped); else the git remote's repo
+    name (stable across machines, checkout dirs, and same-named forks); else the
+    git toplevel dirname. Non-git dirs stay unscoped — a bare cwd name is too
+    machine-specific to be an identity. Lazy + cached: only save paths pay the
+    git calls, never the per-turn recall path."""
+    global _project_cache
+    p = os.environ.get("BRAIN_PROJECT")
+    if p is not None:
+        return p.strip()
+    if _project_cache is None:
+        _project_cache = ""
+        try:
+            url = subprocess.run(["git", "config", "--get", "remote.origin.url"],
+                                 capture_output=True, text=True, timeout=5).stdout.strip()
+            if url:
+                tail = url.rstrip("/").replace(":", "/").rsplit("/", 1)[-1]
+                _project_cache = re.sub(r"\.git$", "", tail).lower()
+            else:
+                top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                                     capture_output=True, text=True, timeout=5).stdout.strip()
+                if top:
+                    _project_cache = os.path.basename(top).lower()
+        except Exception:
+            pass
+    return _project_cache
 
 # This phrase lives inside INSTRUCTION *and* is the sweep's skip-guard, so the two
 # can never drift apart (a single literal, not two that must be kept in sync).
@@ -212,6 +246,8 @@ def _save(text, typ="fact", source="human"):
     payload = {"content": body, "type": typ, "source": source}
     if source == "auto":
         payload["tags"] = ["auto-distill"]
+    if project_id():
+        payload["project"] = project_id()  # bare repo name; see project_id()
     return api("/agentmemory/remember", "POST", payload)
 
 
@@ -231,6 +267,8 @@ def do_file(path, note=""):
         return ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n'
                 % (boundary, name, value)).encode()
     pre = field("note", note) + field("user", USER_ID)
+    if project_id():
+        pre += field("project", project_id())
     pre += ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
             'Content-Type: application/octet-stream\r\n\r\n'
             % (boundary, os.path.basename(path))).encode()
@@ -534,11 +572,14 @@ def main():
         # Name the attached brain (compliance: multi-brain machines must be able
         # to SEE which brain this project captures to — wrong-brain attachment
         # should be noticeable, not silent).
+        ctx = ("team-brain: this session is connected to %s (memories saved/"
+               "captured there are attributed to %s)." % (BRAIN_URL, USER_ID))
+        if project_id():
+            ctx += (" Working repo: %s — pass project=\"%s\" on memory_save so "
+                    "interactive saves carry the repo scope too."
+                    % (project_id(), project_id()))
         print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext":
-                "team-brain: this session is connected to %s (memories saved/"
-                "captured there are attributed to %s)." % (BRAIN_URL, USER_ID)}}))
+            "hookEventName": "SessionStart", "additionalContext": ctx}}))
         if not NO_DISTILL:
             detach("_bgsweep", stdin_json().get("session_id") or "none")
     elif cmd == "_bgstop":
@@ -553,6 +594,9 @@ def main():
     elif cmd == "_bgnow":
         kp_distill(a[0], a[1])
     elif cmd == "_bgsweep":
+        # The sweep distills OTHER sessions' transcripts — this process's cwd
+        # says nothing about THEIR repos, so sweep saves go explicitly unscoped.
+        os.environ["BRAIN_PROJECT"] = ""
         cur = a[0] if a else "none"
         os.makedirs(STATE, exist_ok=True)
         since = os.path.join(STATE, "since")

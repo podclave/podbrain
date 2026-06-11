@@ -54,7 +54,9 @@ TOOLS = [
        {"content": _STR("The insight or decision to remember"),
         "type": _STR("Memory type: pattern, preference, architecture, bug, workflow, or fact"),
         "concepts": _STR("Comma-separated key concepts"),
-        "files": _STR("Comma-separated relevant file paths")},
+        "files": _STR("Comma-separated relevant file paths"),
+        "project": _STR("Bare repo name this memory belongs to (the session-start "
+                        "context announces it); omit when not repo-specific")},
        required=["content"]),
     _t("memory_recall",
        "Search past session observations for relevant context. Use when you need to "
@@ -144,10 +146,13 @@ async def call_tool(name: str, args: dict, am_base: str, secret: str, note_write
         if not isinstance(content, str) or not content.strip():
             raise ToolError("content is required")
         content = content.strip()
-        out = await engine_call(am_base, secret, "POST", "/agentmemory/remember", {
-            "content": content, "type": args.get("type") or "fact",
-            "concepts": _norm_list(args.get("concepts")),
-            "files": _norm_list(args.get("files"))})
+        payload = {"content": content, "type": args.get("type") or "fact",
+                   "concepts": _norm_list(args.get("concepts")),
+                   "files": _norm_list(args.get("files"))}
+        proj = args.get("project")
+        if isinstance(proj, str) and proj.strip():
+            payload["project"] = proj.strip()  # engine persists this natively
+        out = await engine_call(am_base, secret, "POST", "/agentmemory/remember", payload)
         note_writes(1)  # feeds the activity-triggered cataloger, like /agentmemory/remember
         return out
     if name in ("memory_recall", "memory_smart_search"):

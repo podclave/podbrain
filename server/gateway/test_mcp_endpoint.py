@@ -157,6 +157,18 @@ def test_save_maps_to_remember_and_counts_write(harness):
     assert content[0]["type"] == "text" and '"ok": true' in content[0]["text"]
 
 
+def test_save_forwards_project_scope(harness):
+    client, calls, _ = harness
+    rpc(client, "tools/call", {"name": "memory_save",
+                               "arguments": {"content": "x", "project": " backend-repo "}})
+    rpc(client, "tools/call", {"name": "memory_save",
+                               "arguments": {"content": "y", "project": 7}})
+    rpc(client, "tools/call", {"name": "memory_save", "arguments": {"content": "z"}})
+    assert calls[0]["payload"]["project"] == "backend-repo"
+    assert "project" not in calls[1]["payload"]  # non-string dropped
+    assert "project" not in calls[2]["payload"]  # omitted stays omitted
+
+
 def test_save_without_content_is_tool_error(harness):
     client, calls, writes = harness
     r = rpc(client, "tools/call", {"name": "memory_save", "arguments": {}})
