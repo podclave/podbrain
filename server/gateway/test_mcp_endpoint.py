@@ -116,13 +116,24 @@ def test_non_object_params_rejected(harness):
 
 def test_tools_list_has_curated_surface(harness):
     client, _, _ = harness
-    names = {t["name"] for t in rpc(client, "tools/list").json()["result"]["tools"]}
-    assert names == {
+    tools = rpc(client, "tools/list").json()["result"]["tools"]
+    assert {t["name"] for t in tools} == {
         "memory_save", "memory_recall", "memory_smart_search", "memory_sessions",
         "memory_export", "memory_audit", "memory_governance_delete",
         "memory_consolidate", "memory_snapshot_create"}
-    for t in rpc(client, "tools/list").json()["result"]["tools"]:
+    for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
+
+
+def test_every_listed_tool_dispatches(harness):
+    """TOOLS and call_tool's if-chain must stay in sync — a listed tool with no
+    dispatch branch only fails at call time ('unhandled tool'), so call them all."""
+    client, _, _ = harness
+    superset_args = {"content": "x", "query": "x", "memoryIds": "a1"}
+    for t in rpc(client, "tools/list").json()["result"]["tools"]:
+        body = rpc(client, "tools/call",
+                   {"name": t["name"], "arguments": superset_args}).json()
+        assert "result" in body and not body["result"].get("isError"), t["name"]
 
 
 def test_save_maps_to_remember_and_counts_write(harness):

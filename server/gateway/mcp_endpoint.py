@@ -121,14 +121,20 @@ def _norm_list(v):
     return []
 
 
-def _limit(v, fallback=10):
+def _pos_int(v):
+    """Positive int from an int/float/numeric-str (never bool); else None."""
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return None
     try:
-        if isinstance(v, bool):
-            return fallback
         n = int(float(v))
-    except (TypeError, ValueError, OverflowError):
-        return fallback
-    return min(n, 100) if n > 0 else fallback
+    except (ValueError, OverflowError):
+        return None
+    return n if n > 0 else None
+
+
+def _limit(v, fallback=10):
+    n = _pos_int(v)
+    return min(n, 100) if n else fallback
 
 
 async def call_tool(name: str, args: dict, am_base: str, secret: str, note_writes):
@@ -158,14 +164,9 @@ async def call_tool(name: str, args: dict, am_base: str, secret: str, note_write
             if fmt:
                 payload["format"] = fmt
             path = "/agentmemory/smart-search"
-        tb = args.get("token_budget")
-        if isinstance(tb, (int, float, str)) and not isinstance(tb, bool):
-            try:
-                n = int(float(tb))
-                if n > 0:
-                    payload["token_budget"] = n
-            except (ValueError, OverflowError):
-                pass
+        tb = _pos_int(args.get("token_budget"))
+        if tb:
+            payload["token_budget"] = tb
         return await engine_call(am_base, secret, "POST", path, payload)
     if name == "memory_sessions":
         return await engine_call(am_base, secret, "GET",
@@ -203,6 +204,7 @@ def _eq(a, b):
 
 def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
     router = APIRouter()
+    expected_auth = f"Bearer {secret}"
 
     def _rpc(id_, **kv):
         return JSONResponse({"jsonrpc": "2.0", "id": id_, **kv})
@@ -214,7 +216,7 @@ def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
     async def mcp_post(request: Request):
         auth = request.headers.get("authorization")
         # no secret configured = fail open (dev) — mirrors app.py require_auth
-        if secret and not (_eq(auth, f"Bearer {secret}") or _eq(request.query_params.get("key"), secret)):
+        if secret and not (_eq(auth, expected_auth) or _eq(request.query_params.get("key"), secret)):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         try:
             msg = json.loads(await request.body() or b"null")
@@ -262,8 +264,6 @@ def build_router(secret: str, am_base: str, note_writes) -> APIRouter:
             return _rpc(msg_id, result=_tool_result(payload))
         return _err(msg_id, -32601, f"method not found: {method}")
 
-    @router.api_route("/mcp", methods=["GET", "DELETE"])
-    async def mcp_no_stream():
-        return Response(status_code=405)
-
+    # No GET/DELETE handler on purpose: Starlette answers unmatched methods on a
+    # matched path with 405, which is exactly the no-stream behavior we want.
     return router

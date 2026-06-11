@@ -36,6 +36,9 @@ import urllib.request, urllib.parse, urllib.error
 HOME = os.path.expanduser("~")
 SELF = os.path.abspath(__file__)
 STATE = os.path.join(HOME, ".claude", ".brain")
+# Opt-out knob: keep auto-recall but skip passive capture (plugins have no
+# per-hook disable, so this is the recall-only escape hatch).
+NO_DISTILL = bool(os.environ.get("BRAIN_NO_DISTILL"))
 
 # This phrase lives inside INSTRUCTION *and* is the sweep's skip-guard, so the two
 # can never drift apart (a single literal, not two that must be kept in sync).
@@ -57,13 +60,17 @@ INSTRUCTION = (
 
 
 # --- config + identity -------------------------------------------------------
-def load_config(required=True):
+def load_config():
+    """Resolve config into env and return (url, secret) — never exits; the
+    caller owns the missing-config policy (strict CLI error vs quiet hooks)."""
     # Plugin installs export userConfig as CLAUDE_PLUGIN_OPTION_* (per-project
-    # pluginConfigs overrides flow through these too); map them in first so one
-    # chain serves plugin, fleet-overlay, and bare-env installs. Explicit
-    # BRAIN_URL/BRAIN_SECRET env still wins.
+    # pluginConfigs overrides flow through these too); map them in FIRST so one
+    # chain serves plugin, fleet-overlay, and bare-env installs with uniform
+    # precedence: explicit env > plugin config > env file (for identity too —
+    # a file-sourced BRAIN_USER must not beat the plugin's user_email).
     for src, dst in (("CLAUDE_PLUGIN_OPTION_BRAIN_URL", "BRAIN_URL"),
-                     ("CLAUDE_PLUGIN_OPTION_BRAIN_SECRET", "BRAIN_SECRET")):
+                     ("CLAUDE_PLUGIN_OPTION_BRAIN_SECRET", "BRAIN_SECRET"),
+                     ("CLAUDE_PLUGIN_OPTION_USER_EMAIL", "BRAIN_USER")):
         if os.environ.get(src) and not os.environ.get(dst):
             os.environ[dst] = os.environ[src]
     if not (os.environ.get("BRAIN_URL") and os.environ.get("BRAIN_SECRET")):
@@ -74,15 +81,13 @@ def load_config(required=True):
                     m = re.match(r'\s*(?:export\s+)?([A-Za-z_]+)=(.*)', line)
                     if m:
                         os.environ.setdefault(m.group(1), m.group(2).strip().strip('"').strip("'"))
-    url, sec = os.environ.get("BRAIN_URL"), os.environ.get("BRAIN_SECRET")
-    if (not url or not sec) and required:
-        sys.exit("set BRAIN_URL and BRAIN_SECRET (env, plugin config, or ~/.env.podclave.brain)")
-    return url, sec
+    return os.environ.get("BRAIN_URL"), os.environ.get("BRAIN_SECRET")
 
 
 def identity():
-    # Explicit env beats plugin config beats platform identity beats git/$USER.
-    u = os.environ.get("BRAIN_USER") or os.environ.get("CLAUDE_PLUGIN_OPTION_USER_EMAIL")
+    # BRAIN_USER is the canonical name; load_config() already folded the plugin's
+    # user_email into it (explicit env wins over plugin config).
+    u = os.environ.get("BRAIN_USER")
     if not u:
         p = os.path.join(HOME, ".podclave", "user-email")
         if os.path.isfile(p):
@@ -433,14 +438,15 @@ def main():
     global BRAIN_URL, BRAIN_SECRET, USER_ID
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     a = sys.argv[2:]
-    # Hooks must never noise up or block a turn on an unconfigured install
-    # (plugin installed, userConfig not yet set): they exit 0 quietly, except
-    # SessionStart, which surfaces it ONCE — systemMessage for the human,
-    # additionalContext for the model (stderr only reaches the debug log).
-    # CLI verbs stay strict (clear error + exit 1).
-    hook_cmd = cmd.startswith("hook-") or cmd.startswith("_bg")
-    BRAIN_URL, BRAIN_SECRET = load_config(required=not hook_cmd)
-    if hook_cmd and not (BRAIN_URL and BRAIN_SECRET):
+    BRAIN_URL, BRAIN_SECRET = load_config()
+    if not (BRAIN_URL and BRAIN_SECRET):
+        # Unconfigured-install policy, all in one place: CLI verbs stay strict
+        # (clear error + exit 1); hooks must never noise up or block a turn, so
+        # they exit 0 quietly — except SessionStart, which surfaces it ONCE
+        # (systemMessage for the human, additionalContext for the model; stderr
+        # only reaches the debug log).
+        if not (cmd.startswith("hook-") or cmd.startswith("_bg")):
+            sys.exit("set BRAIN_URL and BRAIN_SECRET (env, plugin config, or ~/.env.podclave.brain)")
         if cmd == "hook-sessionstart" and not guard():
             print("[team-brain] installed but not configured — memory features "
                   "inactive (run /team-brain:setup, or set BRAIN_URL/BRAIN_SECRET)", file=sys.stderr)
@@ -506,7 +512,7 @@ def main():
         if out:
             print("\n".join(out))
     elif cmd == "hook-stop":
-        if guard() or os.environ.get("BRAIN_NO_DISTILL"):
+        if guard() or NO_DISTILL:
             return
         os.makedirs(STATE, exist_ok=True)
         d = stdin_json(); sid, tr = d.get("session_id"), d.get("transcript_path")
@@ -516,7 +522,7 @@ def main():
         open(os.path.join(STATE, "ping-" + sid), "w").write(ts)
         detach("_bgstop", sid, tr, ts)
     elif cmd == "hook-sessionend":
-        if guard() or os.environ.get("BRAIN_NO_DISTILL"):
+        if guard() or NO_DISTILL:
             return
         d = stdin_json(); sid, tr = d.get("session_id"), d.get("transcript_path")
         if not (sid and tr and os.path.isfile(tr)):
@@ -533,7 +539,7 @@ def main():
             "additionalContext":
                 "team-brain: this session is connected to %s (memories saved/"
                 "captured there are attributed to %s)." % (BRAIN_URL, USER_ID)}}))
-        if not os.environ.get("BRAIN_NO_DISTILL"):
+        if not NO_DISTILL:
             detach("_bgsweep", stdin_json().get("session_id") or "none")
     elif cmd == "_bgstop":
         sid, tr, ts = a
